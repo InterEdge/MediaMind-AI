@@ -81,7 +81,7 @@ export default function App() {
       case "dashboard":
         return <Dashboard data={data} loading={loading} onNavigate={navigate} />;
       case "knowledge":
-        return <KnowledgeBase documents={data.documents} loading={loading} />;
+        return <KnowledgeBase />;
       case "generator":
         return <ContentGenerator prompts={data.prompts} drafts={data.drafts} onCreated={fetchAll} />;
       case "drafts":
