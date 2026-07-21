@@ -13,14 +13,15 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { DataState, ViewId } from "../App";
-
+ 
 interface DashboardProps {
   data: DataState;
   loading: boolean;
   onNavigate: (v: ViewId) => void;
+  onUploadDocument: () => void;
 }
-
-export default function Dashboard({ data, loading, onNavigate }: DashboardProps) {
+ 
+export default function Dashboard({ data, loading, onNavigate, onUploadDocument }: DashboardProps) {
   const stats = [
     {
       label: "Documents Uploaded",
@@ -55,20 +56,20 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
       trendUp: true,
     },
   ];
-
+ 
   const colorMap: Record<string, { bg: string; text: string; ring: string }> = {
     blue: { bg: "bg-blue-50", text: "text-blue-600", ring: "ring-blue-100" },
     emerald: { bg: "bg-emerald-50", text: "text-emerald-600", ring: "ring-emerald-100" },
     violet: { bg: "bg-violet-50", text: "text-violet-600", ring: "ring-violet-100" },
     amber: { bg: "bg-amber-50", text: "text-amber-600", ring: "ring-amber-100" },
   };
-
+ 
   const quickActions = [
-    { label: "Upload Document", icon: Upload, view: "knowledge" as ViewId, color: "bg-blue-600 hover:bg-blue-700" },
-    { label: "Generate LinkedIn Post", icon: Sparkles, view: "generator" as ViewId, color: "bg-emerald-600 hover:bg-emerald-700" },
-    { label: "Open Prompt Library", icon: Library, view: "prompts" as ViewId, color: "bg-slate-800 hover:bg-slate-900" },
+    { label: "Upload Document", icon: Upload, action: "upload" as "upload" | ViewId, color: "bg-blue-600 hover:bg-blue-700" },
+    { label: "Generate LinkedIn Post", icon: Sparkles, action: "generator" as ViewId, color: "bg-emerald-600 hover:bg-emerald-700" },
+    { label: "Open Prompt Library", icon: Library, action: "prompts" as ViewId, color: "bg-slate-800 hover:bg-slate-900" },
   ];
-
+ 
   const activityIcon = (type: string) => {
     switch (type) {
       case "upload": return { icon: Upload, color: "bg-blue-100 text-blue-600" };
@@ -79,7 +80,7 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
       default: return { icon: AlertCircle, color: "bg-slate-100 text-slate-600" };
     }
   };
-
+ 
   const formatTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const hrs = Math.floor(diff / 3600000);
@@ -87,7 +88,7 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
     if (hrs < 24) return `${hrs}h ago`;
     return `${Math.floor(hrs / 24)}d ago`;
   };
-
+ 
   const statusBadge = (status: string) => {
     const map: Record<string, string> = {
       Draft: "bg-slate-100 text-slate-600",
@@ -101,17 +102,17 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
     };
     return map[status] ?? "bg-slate-100 text-slate-600";
   };
-
+ 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Welcome back, Alex. Here's what's happening with your media operations.
+          Welcome back, Alex. Here\'s what\'s happening with your media operations.
         </p>
       </div>
-
+ 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {loading
@@ -141,7 +142,7 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
               );
             })}
       </div>
-
+ 
       {/* Quick Actions */}
       <div>
         <h2 className="mb-3 text-sm font-semibold text-slate-700">Quick Actions</h2>
@@ -151,7 +152,7 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
             return (
               <button
                 key={action.label}
-                onClick={() => onNavigate(action.view)}
+                onClick={() => action.action === "upload" ? onUploadDocument() : onNavigate(action.action)}
                 className={`group flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm font-semibold text-white shadow-md transition-all duration-300 hover:shadow-lg active:scale-[0.98] ${action.color}`}
               >
                 <Icon className="h-5 w-5" />
@@ -162,7 +163,7 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
           })}
         </div>
       </div>
-
+ 
       {/* Recent Activity + Recent Drafts */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Recent Activity */}
@@ -203,7 +204,7 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
             )}
           </div>
         </div>
-
+ 
         {/* Recent Drafts */}
         <div className="rounded-2xl border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
@@ -245,60 +246,60 @@ export default function Dashboard({ data, loading, onNavigate }: DashboardProps)
                 ))}
           </div>
         </div>
-      </div>
-
-      {/* Recent Documents */}
-      <div className="rounded-2xl border border-slate-200 bg-white">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-800">Recent Documents</h2>
-          <button onClick={() => onNavigate("knowledge")} className="text-xs font-medium text-blue-600 hover:text-blue-700">
-            View All
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100 text-left">
-                <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Document</th>
-                <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Type</th>
-                <th className="hidden px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 sm:table-cell">Category</th>
-                <th className="hidden px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 sm:table-cell">Size</th>
-                <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {loading
-                ? Array.from({ length: 4 }).map((_, i) => (
-                    <tr key={i}>
-                      <td className="px-5 py-4"><div className="h-4 w-48 animate-pulse rounded bg-slate-100" /></td>
-                      <td className="px-5 py-4"><div className="h-4 w-20 animate-pulse rounded bg-slate-100" /></td>
-                      <td className="hidden px-5 py-4 sm:table-cell"><div className="h-4 w-24 animate-pulse rounded bg-slate-100" /></td>
-                      <td className="hidden px-5 py-4 sm:table-cell"><div className="h-4 w-16 animate-pulse rounded bg-slate-100" /></td>
-                      <td className="px-5 py-4"><div className="h-5 w-16 animate-pulse rounded-full bg-slate-100" /></td>
-                    </tr>
-                  ))
-                : data.documents.slice(0, 6).map((doc) => (
-                    <tr key={doc.id} className="group transition hover:bg-slate-50">
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <FileText className="h-4 w-4" />
+ 
+        {/* Recent Documents */}
+        <div className="rounded-2xl border border-slate-200 bg-white">
+          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+            <h2 className="text-sm font-semibold text-slate-800">Recent Documents</h2>
+            <button onClick={() => onNavigate("knowledge")} className="text-xs font-medium text-blue-600 hover:text-blue-700">
+              View All
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Document</th>
+                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Type</th>
+                  <th className="hidden px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 sm:table-cell">Category</th>
+                  <th className="hidden px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 sm:table-cell">Size</th>
+                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {loading
+                  ? Array.from({ length: 4 }).map((_, i) => (
+                      <tr key={i}>
+                        <td className="px-5 py-4"><div className="h-4 w-48 animate-pulse rounded bg-slate-100" /></td>
+                        <td className="px-5 py-4"><div className="h-4 w-20 animate-pulse rounded bg-slate-100" /></td>
+                        <td className="hidden px-5 py-4 sm:table-cell"><div className="h-4 w-24 animate-pulse rounded bg-slate-100" /></td>
+                        <td className="hidden px-5 py-4 sm:table-cell"><div className="h-4 w-16 animate-pulse rounded bg-slate-100" /></td>
+                        <td className="px-5 py-4"><div className="h-5 w-16 animate-pulse rounded-full bg-slate-100" /></td>
+                      </tr>
+                    ))
+                  : data.documents.slice(0, 6).map((doc) => (
+                      <tr key={doc.id} className="group transition hover:bg-slate-50">
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                              <FileText className="h-4 w-4" />
+                            </div>
+                            <span className="text-sm font-medium text-slate-800">{doc.title}</span>
                           </div>
-                          <span className="text-sm font-medium text-slate-800">{doc.title}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5 text-sm text-slate-500">{doc.type}</td>
-                      <td className="hidden px-5 py-3.5 text-sm text-slate-500 sm:table-cell">{doc.category}</td>
-                      <td className="hidden px-5 py-3.5 text-sm text-slate-500 sm:table-cell">{doc.file_size}</td>
-                      <td className="px-5 py-3.5">
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadge(doc.status)}`}>
-                          {doc.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-            </tbody>
-          </table>
+                        </td>
+                        <td className="px-5 py-3.5 text-sm text-slate-500">{doc.type}</td>
+                        <td className="hidden px-5 py-3.5 text-sm text-slate-500 sm:table-cell">{doc.category}</td>
+                        <td className="hidden px-5 py-3.5 text-sm text-slate-500 sm:table-cell">{doc.file_size}</td>
+                        <td className="px-5 py-3.5">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusBadge(doc.status)}`}>
+                            {doc.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
