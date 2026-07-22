@@ -87,3 +87,23 @@ export async function updateDocumentStatus(
     .eq("id", id);
   if (error) throw error;
 }
+
+export async function processDocument(documentId: string): Promise<void> {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/process-document`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify({ documentId }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Processing failed (${response.status}): ${errBody}`);
+  }
+}

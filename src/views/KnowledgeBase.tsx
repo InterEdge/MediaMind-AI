@@ -25,6 +25,7 @@ import {
 import {
   getDocuments,
   deleteDocument,
+  processDocument,
   type DocumentRow,
 } from "../services/documents";
 
@@ -72,6 +73,7 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "alpha">("newest");
   const [selected, setSelected] = useState<DocumentRow | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DocumentRow | null>(null);
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
 
   const loadDocs = useCallback(async () => {
     setLoading(true);
@@ -90,6 +92,39 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   useEffect(() => {
     loadDocs();
   }, [loadDocs, refreshKey]);
+
+  // Auto-refresh while any documents are in Processing status
+  const hasProcessing = docs.some((d) => d.status === "Processing");
+  useEffect(() => {
+    if (!hasProcessing) return;
+    const interval = setInterval(() => {
+      getDocuments().then(setDocs).catch(console.error);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasProcessing]);
+
+  const handleReprocess = async (doc: DocumentRow) => {
+    setReprocessingId(doc.id);
+    try {
+      // Optimistically set status to Processing
+      setDocs((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "Processing" } : d)),
+      );
+      await processDocument(doc.id);
+      // Refresh to get the updated summary/keywords
+      const fresh = await getDocuments();
+      setDocs(fresh);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to reprocess document");
+      // Revert status on failure
+      setDocs((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: doc.status } : d)),
+      );
+    } finally {
+      setReprocessingId(null);
+    }
+  };
 
   const categories = useMemo(() => {
     const set = new Set(docs.map((d) => d.category));
@@ -336,6 +371,18 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                                   title="View"
                                 >
                                   <Eye className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleReprocess(doc); }}
+                                  disabled={reprocessingId === doc.id || doc.status === "Processing"}
+                                  className="rounded-lg p-1.5 text-slate-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:opacity-40"
+                                  title="Reprocess with AI"
+                                >
+                                  {reprocessingId === doc.id || doc.status === "Processing" ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="h-4 w-4" />
+                                  )}
                                 </button>
                                 <button
                                   onClick={(e) => e.stopPropagation()}

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Upload, X, FileText, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
-import { uploadDocument } from "../services/documents";
+import { uploadDocument, processDocument } from "../services/documents";
 
 interface UploadDocumentProps {
   onClose: () => void;
@@ -10,6 +10,7 @@ interface UploadDocumentProps {
 export default function UploadDocument({ onClose, onUploaded }: UploadDocumentProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -20,17 +21,24 @@ export default function UploadDocument({ onClose, onUploaded }: UploadDocumentPr
     setSuccess(false);
 
     try {
-      await uploadDocument(file);
+      const doc = await uploadDocument(file);
+      setIsUploading(false);
+      setIsProcessing(true);
+      // Fire and forget — the edge function processes asynchronously.
+      // We don't block the UI on AI processing; the Knowledge Base will
+      // refresh and show the document. Processing completes server-side.
+      processDocument(doc.id).catch((err) => console.error("Processing failed:", err));
       setSuccess(true);
       setTimeout(() => {
         onUploaded();
         onClose();
-      }, 1000);
+      }, 1200);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Upload failed. Please try again.");
     } finally {
       setIsUploading(false);
+      setIsProcessing(false);
     }
   };
 
@@ -81,7 +89,7 @@ export default function UploadDocument({ onClose, onUploaded }: UploadDocumentPr
                 <CheckCircle2 className="h-7 w-7 text-emerald-600" />
               </div>
               <p className="mt-4 text-sm font-semibold text-slate-800">Document uploaded successfully!</p>
-              <p className="mt-1 text-xs text-slate-500">Redirecting to Knowledge Base...</p>
+              <p className="mt-1 text-xs text-slate-500">AI indexing started — check Knowledge Base shortly.</p>
             </div>
           ) : (
             <div
@@ -106,6 +114,11 @@ export default function UploadDocument({ onClose, onUploaded }: UploadDocumentPr
                 <>
                   <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
                   <p className="mt-3 text-sm font-medium text-slate-600">Uploading...</p>
+                </>
+              ) : isProcessing ? (
+                <>
+                  <Loader2 className="h-10 w-10 animate-spin text-emerald-500" />
+                  <p className="mt-3 text-sm font-medium text-slate-600">AI indexing in progress...</p>
                 </>
               ) : (
                 <>
