@@ -2,54 +2,88 @@ import { supabase } from "../lib/supabase";
 
 const BUCKET = "documents";
 
-export async function uploadDocument(file: File) {
-  const fileName = `${Date.now()}-${file.name}`;
+export interface DocumentRow {
+  id: string;
+  title: string;
+  type: string;
+  category: string;
+  file_size: string;
+  status: string;
+  summary: string | null;
+  tags: string[];
+  uploaded_at: string;
+  file_path: string | null;
+}
 
-  // Upload file to Storage
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function inferType(fileName: string): string {
+  const ext = fileName.split(".").pop()?.toUpperCase() || "FILE";
+  if (ext === "PDF") return "PDF";
+  if (ext === "DOC" || ext === "DOCX") return "Word";
+  if (ext === "PPT" || ext === "PPTX") return "Presentation";
+  return ext;
+}
+
+export async function uploadDocument(file: File): Promise<DocumentRow> {
+  const fileExt = file.name.split(".").pop();
+  const storagePath = `${Date.now()}.${fileExt}`;
+
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
-    .upload(fileName, file);
+    .upload(storagePath, file);
 
-  if (uploadError) {
-    throw uploadError;
-  }
+  if (uploadError) throw uploadError;
 
-  // Save document details
   const { data, error } = await supabase
     .from("documents")
     .insert([
       {
-        name: file.name,
-        category: "General",
-        type: file.name.split(".").pop()?.toUpperCase() || "FILE",
-        file_size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+        title: file.name,
+        type: inferType(file.name),
+        category: "Uncategorized",
+        file_size: formatFileSize(file.size),
         status: "Processing",
         summary: null,
         tags: [],
-        uploaded_at: new Date().toISOString(),
-        file_path: fileName,
+        file_path: storagePath,
       },
     ])
     .select()
     .single();
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
-  return data;
+  return data as DocumentRow;
 }
 
-
-export async function getDocuments() {
+export async function getDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from("documents")
     .select("*")
     .order("uploaded_at", { ascending: false });
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
-  return data;
+  return (data || []) as DocumentRow[];
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  const { error } = await supabase.from("documents").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function updateDocumentStatus(
+  id: string,
+  status: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("documents")
+    .update({ status })
+    .eq("id", id);
+  if (error) throw error;
 }
