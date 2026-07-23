@@ -1,17 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
 import Dashboard from "./views/Dashboard";
 import KnowledgeBase from "./views/KnowledgeBase";
+import ContentGenerator from "./views/ContentGenerator";
+import PromptLibrary from "./views/PromptLibrary";
+import Drafts from "./views/Drafts";
 import UploadDocument from "./components/UploadDocument";
 import Sidebar from "./components/Sidebar";
 import TopNav from "./components/TopNav";
-import { supabase, type Notification } from "./lib/supabase";
+import { supabase, type Notification, type Prompt, type Draft } from "./lib/supabase";
 import { getDocuments, type DocumentRow } from "./services/documents";
 
 export type ViewId = "dashboard" | "knowledge" | "generator" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
 
 interface DataState {
   documents: DocumentRow[];
-  drafts: any[];
+  drafts: Draft[];
+  prompts: Prompt[];
   posts: any[];
   activities: any[];
   notifications: Notification[];
@@ -24,6 +28,7 @@ function App() {
   const [data, setData] = useState<DataState>({
     documents: [],
     drafts: [],
+    prompts: [],
     posts: [],
     activities: [],
     notifications: [],
@@ -34,14 +39,17 @@ function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [documents, notifications] = await Promise.all([
+      const [documents, notifications, drafts, prompts] = await Promise.all([
         getDocuments(),
         supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(10),
+        supabase.from("drafts").select("*").order("created_at", { ascending: false }),
+        supabase.from("prompts").select("*").order("created_at", { ascending: false }),
       ]);
 
       setData({
         documents,
-        drafts: [],
+        drafts: (drafts.data || []) as Draft[],
+        prompts: (prompts.data || []) as Prompt[],
         posts: [],
         activities: [],
         notifications: (notifications.data || []) as Notification[],
@@ -112,10 +120,28 @@ function App() {
           {currentView === "knowledge" && (
             <KnowledgeBase onUploadClick={handleUploadDocument} refreshKey={refreshKey} />
           )}
-          {(currentView === "generator" ||
-            currentView === "prompts" ||
-            currentView === "drafts" ||
-            currentView === "calendar" ||
+          {currentView === "generator" && (
+            <ContentGenerator
+              prompts={data.prompts}
+              documents={data.documents}
+              onDraftCreated={() => setRefreshKey((k) => k + 1)}
+            />
+          )}
+          {currentView === "prompts" && (
+            <PromptLibrary
+              prompts={data.prompts}
+              loading={loading}
+              onRefresh={() => setRefreshKey((k) => k + 1)}
+            />
+          )}
+          {currentView === "drafts" && (
+            <Drafts
+              drafts={data.drafts}
+              loading={loading}
+              onRefresh={() => setRefreshKey((k) => k + 1)}
+            />
+          )}
+          {(currentView === "calendar" ||
             currentView === "analytics" ||
             currentView === "settings") && (
             <div className="flex h-[60vh] flex-col items-center justify-center text-center">

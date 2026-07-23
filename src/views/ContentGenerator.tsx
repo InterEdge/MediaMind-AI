@@ -1,57 +1,115 @@
 import { useState } from "react";
-import { Sparkles, Copy, Check, Save, Wand2, Hash, Target, Zap } from "lucide-react";
-import { supabase } from "../lib/supabase";
-import type { Prompt, Draft } from "../lib/supabase";
+import {
+  Sparkles,
+  Copy,
+  Check,
+  Save,
+  Wand2,
+  Hash,
+  Target,
+  Zap,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle,
+  RefreshCw,
+  Plus,
+} from "lucide-react";
+import { supabase, type Prompt, type Draft } from "../lib/supabase";
+import { getDocuments, type DocumentRow } from "../services/documents";
 
 interface ContentGeneratorProps {
   prompts: Prompt[];
-  drafts: Draft[];
-  onCreated: () => void;
+  documents: DocumentRow[];
+  onDraftCreated: () => void;
 }
+
+const contentTypeOptions = [
+  "LinkedIn Post",
+  "Twitter Thread",
+  "Newsletter",
+  "Sales Email",
+  "Blog Post",
+  "Ad Copy",
+];
 
 const toneOptions = ["Professional", "Conversational", "Authoritative", "Inspirational", "Analytical"];
 const audienceOptions = ["Media Buyers", "Agency Leaders", "Brand Marketers", "Ad Tech Professionals", "CMOs"];
 
-export default function ContentGenerator({ prompts, onCreated }: ContentGeneratorProps) {
+const platformMap: Record<string, string> = {
+  "LinkedIn Post": "LinkedIn",
+  "Twitter Thread": "Twitter",
+  "Newsletter": "Email",
+  "Sales Email": "Email",
+  "Blog Post": "Blog",
+  "Ad Copy": "Advertising",
+};
+
+export default function ContentGenerator({ prompts, documents, onDraftCreated }: ContentGeneratorProps) {
+  const [contentType, setContentType] = useState("LinkedIn Post");
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("Professional");
   const [audience, setAudience] = useState("Media Buyers");
   const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [showDocPicker, setShowDocPicker] = useState(false);
+  const [additionalInstructions, setAdditionalInstructions] = useState("");
   const [generating, setGenerating] = useState(false);
   const [output, setOutput] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const linkedinPrompts = prompts.filter((p) => p.category === "LinkedIn");
+  const indexedDocs = documents.filter((d) => d.status === "Indexed" || d.status === "Ready");
+  const relevantPrompts = prompts.filter((p) => {
+    if (contentType === "LinkedIn Post") return p.category === "LinkedIn";
+    if (contentType === "Ad Copy") return p.category === "Advertising";
+    if (contentType === "Sales Email" || contentType === "Newsletter") return p.category === "Proposal" || p.category === "Strategy";
+    return true;
+  });
 
   const handleGenerate = async () => {
     if (!topic.trim()) return;
     setGenerating(true);
     setOutput("");
+    setError(null);
     setSaved(false);
 
-    // Simulate AI generation with realistic content
-    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-    const generated = `${topic.charAt(0).toUpperCase() + topic.slice(1)} is reshaping how media professionals think about their craft.
+      const response = await fetch(`${supabaseUrl}/functions/v1/generate-content`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${anonKey}`,
+          apikey: anonKey,
+        },
+        body: JSON.stringify({
+          contentType,
+          topic,
+          tone,
+          audience,
+          documentIds: selectedDocIds,
+          promptTemplate: selectedPrompt?.template || undefined,
+          additionalInstructions: additionalInstructions.trim() || undefined,
+        }),
+      });
 
-After analyzing 200+ campaigns across the industry, three patterns stand out:
+      const data = await response.json();
 
-1. Data-driven creative decisions outperform gut-based ones by 3.2x
-2. Cross-platform consistency increases brand recall by 47%
-3. AI-assisted content generation cuts production time by 60%
+      if (!response.ok) {
+        throw new Error(data.error || "Generation failed");
+      }
 
-The brands winning right now aren't the ones with the biggest budgets. They're the ones with the smartest systems.
-
-What's your approach to ${topic.toLowerCase()} in 2025?
-
-#MediaStrategy #${audience.replace(/\s/g, "")} #Advertising
-
-— Generated with a ${tone} tone for ${audience}`;
-
-    setOutput(generated);
-    setGenerating(false);
+      setOutput(data.content);
+    } catch (err: any) {
+      setError(err.message || "Failed to generate content. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const handleCopy = () => {
@@ -63,41 +121,75 @@ What's your approach to ${topic.toLowerCase()} in 2025?
   const handleSave = async () => {
     if (!output) return;
     setSaving(true);
-    await supabase.from("drafts").insert({
-      title: topic.charAt(0).toUpperCase() + topic.slice(1),
+    const title = topic.length > 60 ? topic.substring(0, 60) + "..." : topic;
+    const wordCount = output.split(/\s+/).length;
+
+    const { error: insertError } = await supabase.from("drafts").insert({
+      title: title.charAt(0).toUpperCase() + title.slice(1),
       content: output,
-      platform: "LinkedIn",
+      platform: platformMap[contentType] || "LinkedIn",
       status: "Draft",
-      word_count: output.split(/\s+/).length,
+      word_count: wordCount,
       ai_generated: true,
     });
-    // Log activity
+
+    if (insertError) {
+      setError("Failed to save draft: " + insertError.message);
+      setSaving(false);
+      return;
+    }
+
     await supabase.from("activities").insert({
       type: "generate",
-      description: `AI generated LinkedIn post "${topic.charAt(0).toUpperCase() + topic.slice(1)}"`,
-      metadata: { platform: "LinkedIn", word_count: output.split(/\s+/).length },
+      description: `AI generated ${contentType}: "${title}"`,
+      metadata: { platform: platformMap[contentType], word_count: wordCount, content_type: contentType },
     });
+
     setSaving(false);
     setSaved(true);
-    onCreated();
+    onDraftCreated();
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const toggleDoc = (id: string) => {
+    setSelectedDocIds((prev) =>
+      prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id],
+    );
   };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Content Generator</h1>
-        <p className="mt-1 text-sm text-slate-500">Generate LinkedIn posts, ad copy, and media proposals powered by AI.</p>
+        <p className="mt-1 text-sm text-slate-500">Generate LinkedIn posts, ad copy, newsletters, and more — powered by AI with your knowledge base as context.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        {/* Left: Input */}
+        {/* Left: Configuration */}
         <div className="space-y-4 lg:col-span-2">
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">Configure Your Post</h2>
+            <h2 className="mb-4 text-sm font-semibold text-slate-800">Configure Your Content</h2>
+
+            {/* Content Type */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Content Type</label>
+              <div className="flex flex-wrap gap-2">
+                {contentTypeOptions.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setContentType(t)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                      contentType === t ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Topic */}
-            <div>
+            <div className="mt-4">
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Topic</label>
               <textarea
                 value={topic}
@@ -148,6 +240,18 @@ What's your approach to ${topic.toLowerCase()} in 2025?
               </div>
             </div>
 
+            {/* Additional Instructions */}
+            <div className="mt-4">
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Additional Instructions (optional)</label>
+              <textarea
+                value={additionalInstructions}
+                onChange={(e) => setAdditionalInstructions(e.target.value)}
+                rows={2}
+                placeholder="e.g. Keep it under 150 words, mention our DSP partnership..."
+                className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
             <button
               onClick={handleGenerate}
               disabled={!topic.trim() || generating}
@@ -161,32 +265,80 @@ What's your approach to ${topic.toLowerCase()} in 2025?
               ) : (
                 <>
                   <Sparkles className="h-4 w-4" />
-                  Generate Post
+                  Generate {contentType}
                 </>
               )}
             </button>
           </div>
 
-          {/* Prompt suggestions */}
+          {/* Knowledge Base Context */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-3 text-sm font-semibold text-slate-800">Suggested Prompts</h2>
-            <div className="space-y-2">
-              {linkedinPrompts.slice(0, 4).map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => setSelectedPrompt(p)}
-                  className={`block w-full rounded-lg border p-3 text-left transition ${
-                    selectedPrompt?.id === p.id
-                      ? "border-blue-300 bg-blue-50"
-                      : "border-slate-100 hover:border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  <p className="text-sm font-medium text-slate-700">{p.name}</p>
-                  <p className="mt-0.5 text-xs text-slate-400 line-clamp-2">{p.description}</p>
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={() => setShowDocPicker(!showDocPicker)}
+              className="flex w-full items-center justify-between"
+            >
+              <h2 className="text-sm font-semibold text-slate-800">Knowledge Base Context</h2>
+              {showDocPicker ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+            </button>
+            {selectedDocIds.length > 0 && (
+              <p className="mt-1 text-xs text-blue-600">{selectedDocIds.length} document{selectedDocIds.length !== 1 ? "s" : ""} selected as context</p>
+            )}
+            {showDocPicker && (
+              <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+                {indexedDocs.length === 0 ? (
+                  <p className="text-xs text-slate-400">No indexed documents available. Upload and process documents first.</p>
+                ) : (
+                  indexedDocs.map((doc) => (
+                    <button
+                      key={doc.id}
+                      onClick={() => toggleDoc(doc.id)}
+                      className={`block w-full rounded-lg border p-3 text-left transition ${
+                        selectedDocIds.includes(doc.id)
+                          ? "border-blue-300 bg-blue-50"
+                          : "border-slate-100 hover:border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selectedDocIds.includes(doc.id) ? "border-blue-500 bg-blue-500" : "border-slate-300"}`}>
+                          {selectedDocIds.includes(doc.id) && <Check className="h-3 w-3 text-white" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-700">{doc.title}</p>
+                          {doc.summary && <p className="mt-0.5 text-xs text-slate-400 line-clamp-2">{doc.summary}</p>}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Prompt suggestions */}
+          {relevantPrompts.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-semibold text-slate-800">Suggested Prompts</h2>
+              <div className="space-y-2">
+                {relevantPrompts.slice(0, 4).map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedPrompt(selectedPrompt?.id === p.id ? null : p)}
+                    className={`block w-full rounded-lg border p-3 text-left transition ${
+                      selectedPrompt?.id === p.id
+                        ? "border-blue-300 bg-blue-50"
+                        : "border-slate-100 hover:border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-slate-700">{p.name}</p>
+                      {selectedPrompt?.id === p.id && <Check className="h-3.5 w-3.5 text-blue-600" />}
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-400 line-clamp-2">{p.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Output */}
@@ -194,7 +346,7 @@ What's your approach to ${topic.toLowerCase()} in 2025?
           <div className="sticky top-6 rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-800">Generated Output</h2>
-              {output && (
+              {output && !generating && (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleCopy}
@@ -202,6 +354,13 @@ What's your approach to ${topic.toLowerCase()} in 2025?
                   >
                     {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
                     {copied ? "Copied" : "Copy"}
+                  </button>
+                  <button
+                    onClick={handleGenerate}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Regenerate
                   </button>
                   <button
                     onClick={handleSave}
@@ -215,6 +374,13 @@ What's your approach to ${topic.toLowerCase()} in 2025?
               )}
             </div>
 
+            {error && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
             {generating ? (
               <div className="flex h-96 flex-col items-center justify-center">
                 <div className="relative">
@@ -223,8 +389,8 @@ What's your approach to ${topic.toLowerCase()} in 2025?
                   </div>
                   <div className="absolute -inset-2 animate-ping rounded-2xl border-2 border-blue-200 opacity-40" />
                 </div>
-                <p className="mt-4 text-sm font-medium text-slate-600">Crafting your post...</p>
-                <p className="mt-1 text-xs text-slate-400">Analyzing tone, audience, and topic context</p>
+                <p className="mt-4 text-sm font-medium text-slate-600">Crafting your {contentType.toLowerCase()}...</p>
+                <p className="mt-1 text-xs text-slate-400">Analyzing tone, audience, and topic context with AI</p>
               </div>
             ) : output ? (
               <div className="rounded-xl bg-slate-50 p-5">
@@ -232,7 +398,8 @@ What's your approach to ${topic.toLowerCase()} in 2025?
                 <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3">
                   <Zap className="h-3.5 w-3.5 text-amber-500" />
                   <span className="text-xs text-slate-400">
-                    {output.split(/\s+/).length} words · Engagement score: {Math.floor(70 + Math.random() * 25)}/100
+                    {output.split(/\s+/).length} words · {contentType}
+                    {selectedDocIds.length > 0 && ` · ${selectedDocIds.length} source document${selectedDocIds.length !== 1 ? "s" : ""}`}
                   </span>
                 </div>
               </div>
@@ -242,7 +409,7 @@ What's your approach to ${topic.toLowerCase()} in 2025?
                   <Sparkles className="h-8 w-8 text-slate-300" />
                 </div>
                 <p className="mt-4 text-sm font-medium text-slate-500">No content generated yet</p>
-                <p className="mt-1 text-xs text-slate-400">Enter a topic and click Generate to create AI-powered content</p>
+                <p className="mt-1 text-xs text-slate-400">Enter a topic, optionally select knowledge base documents as context, and click Generate</p>
               </div>
             )}
           </div>

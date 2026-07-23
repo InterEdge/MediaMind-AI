@@ -13,3 +13,26 @@ export interface Notification {
   read: boolean;
   created_at: string;
 }
+
+export interface Prompt {
+  id: string;
+  name: string;
+  category: string;
+  template: string;
+  description: string | null;
+  uses: number | null;
+  is_favorite: boolean | null;
+  created_at: string;
+}
+
+export interface Draft {
+  id: string;
+  title: string;
+  content: string;
+  platform: string;
+  status: string;
+  word_count: number | null;
+  ai_generated: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
