@@ -51,30 +51,31 @@ Deno.serve(async (req: Request) => {
       .update({ status: "Processing" })
       .eq("id", documentId);
 
-    // 3. Download the file from storage
-    let fileContent: string;
-    const { data: fileData, error: downloadError } = await supabase
-      .storage
-      .from("documents")
-      .download(doc.file_path);
+    // 3. Download the file from storage (if file_path exists)
+    let fileContent: string = doc.title || "Untitled document";
 
-    if (downloadError || !fileData) {
-      // Fallback: use title-based summary if file can't be downloaded
-      fileContent = doc.title;
-    } else {
-      // Extract text — try as text first, fallback to filename
-      try {
-        fileContent = await fileData.text();
-        // If it looks like binary (non-printable chars), use the title instead
-        const nonPrintable = fileContent.split("").filter((c) => {
-          const code = c.charCodeAt(0);
-          return code < 9 || (code > 13 && code < 32);
-        }).length;
-        if (nonPrintable > fileContent.length * 0.1) {
-          fileContent = doc.title;
+    if (doc.file_path) {
+      const { data: fileData, error: downloadError } = await supabase
+        .storage
+        .from("documents")
+        .download(doc.file_path);
+
+      if (!downloadError && fileData) {
+        try {
+          const text = await fileData.text();
+          // If it looks like binary (non-printable chars), use the title instead
+          const nonPrintable = text.split("").filter((c) => {
+            const code = c.charCodeAt(0);
+            return code < 9 || (code > 13 && code < 32);
+          }).length;
+          if (nonPrintable > text.length * 0.1) {
+            fileContent = doc.title;
+          } else {
+            fileContent = text;
+          }
+        } catch {
+          // Binary file — use title
         }
-      } catch {
-        fileContent = doc.title;
       }
     }
 
@@ -125,18 +126,24 @@ Deno.serve(async (req: Request) => {
         keywords = generateBasicKeywords(doc.title, doc.category, doc.type);
       } else {
         const aiData = await aiResponse.json();
-        const content = aiData.choices?.[0]?.message?.content || "";
+        const content: string | null = aiData.choices?.[0]?.message?.content ?? null;
 
-        try {
-          // Parse the JSON from AI response
-          const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-          const parsed = JSON.parse(cleaned);
-          summary = parsed.summary || `Document: ${doc.title}`;
-          keywords = Array.isArray(parsed.keywords) ? parsed.keywords : [];
-        } catch {
-          // If JSON parsing fails, use the raw content as summary
-          summary = content || `Document: ${doc.title}`;
+        if (!content) {
+          summary = `This document titled "${doc.title}" contains ${doc.type} content in the ${doc.category} category.`;
           keywords = generateBasicKeywords(doc.title, doc.category, doc.type);
+        } else {
+          try {
+            const cleaned = content
+              .replace(/```json\n?/g, "")
+              .replace(/```\n?/g, "")
+              .trim();
+            const parsed = JSON.parse(cleaned);
+            summary = parsed.summary || `Document: ${doc.title}`;
+            keywords = Array.isArray(parsed.keywords) ? parsed.keywords : [];
+          } catch {
+            summary = content || `Document: ${doc.title}`;
+            keywords = generateBasicKeywords(doc.title, doc.category, doc.type);
+          }
         }
       }
     } else {
