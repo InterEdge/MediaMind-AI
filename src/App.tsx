@@ -4,10 +4,13 @@ import KnowledgeBase from "./views/KnowledgeBase";
 import ContentGenerator from "./views/ContentGenerator";
 import PromptLibrary from "./views/PromptLibrary";
 import Drafts from "./views/Drafts";
+import Calendar from "./views/Calendar";
+import Analytics from "./views/Analytics";
+import Settings from "./views/Settings";
 import UploadDocument from "./components/UploadDocument";
 import Sidebar from "./components/Sidebar";
 import TopNav from "./components/TopNav";
-import { supabase, type Notification, type Prompt, type Draft } from "./lib/supabase";
+import { supabase, type Notification, type Prompt, type Draft, type Post, type Activity } from "./lib/supabase";
 import { getDocuments, type DocumentRow } from "./services/documents";
 
 export type ViewId = "dashboard" | "knowledge" | "generator" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
@@ -16,14 +19,15 @@ interface DataState {
   documents: DocumentRow[];
   drafts: Draft[];
   prompts: Prompt[];
-  posts: any[];
-  activities: any[];
+  posts: Post[];
+  activities: Activity[];
   notifications: Notification[];
 }
 
 function App() {
   const [currentView, setCurrentView] = useState<ViewId>("dashboard");
   const [showUpload, setShowUpload] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [data, setData] = useState<DataState>({
     documents: [],
@@ -39,19 +43,21 @@ function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [documents, notifications, drafts, prompts] = await Promise.all([
+      const [documents, notifications, drafts, prompts, posts, activities] = await Promise.all([
         getDocuments(),
         supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(10),
         supabase.from("drafts").select("*").order("created_at", { ascending: false }),
         supabase.from("prompts").select("*").order("created_at", { ascending: false }),
+        supabase.from("posts").select("*").order("created_at", { ascending: false }),
+        supabase.from("activities").select("*").order("created_at", { ascending: false }).limit(20),
       ]);
 
       setData({
         documents,
         drafts: (drafts.data || []) as Draft[],
         prompts: (prompts.data || []) as Prompt[],
-        posts: [],
-        activities: [],
+        posts: (posts.data || []) as Post[],
+        activities: (activities.data || []) as Activity[],
         notifications: (notifications.data || []) as Notification[],
       });
     } catch (err) {
@@ -106,6 +112,9 @@ function App() {
           unreadCount={unreadCount}
           notifications={data.notifications}
           onRefresh={handleMarkNotificationsRead}
+          onNavigate={handleNavigate}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
         />
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
@@ -141,14 +150,13 @@ function App() {
               onRefresh={() => setRefreshKey((k) => k + 1)}
             />
           )}
-          {(currentView === "calendar" ||
-            currentView === "analytics" ||
-            currentView === "settings") && (
-            <div className="flex h-[60vh] flex-col items-center justify-center text-center">
-              <h2 className="text-lg font-semibold text-slate-700">Coming Soon</h2>
-              <p className="mt-1 text-sm text-slate-400">This module is not yet built.</p>
-            </div>
+          {currentView === "calendar" && (
+            <Calendar posts={data.posts} loading={loading} />
           )}
+          {currentView === "analytics" && (
+            <Analytics data={data} loading={loading} />
+          )}
+          {currentView === "settings" && <Settings />}
         </main>
       </div>
 

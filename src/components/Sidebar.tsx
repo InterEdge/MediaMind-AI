@@ -90,7 +90,7 @@ export default function Sidebar({ view, onNavigate, open, onClose }: SidebarProp
           <div className="rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 p-4 shadow-lg">
             <p className="text-sm font-semibold text-white">Upgrade to Pro</p>
             <p className="mt-1 text-xs text-blue-100">Unlock unlimited AI generations and advanced analytics.</p>
-            <button className="mt-3 w-full rounded-lg bg-white py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-50">
+            <button onClick={() => onNavigate("settings")} className="mt-3 w-full rounded-lg bg-white py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-50">
               Upgrade Now
             </button>
           </div>

@@ -36,3 +36,23 @@ export interface Draft {
   created_at: string;
   updated_at: string;
 }
+
+export interface Post {
+  id: string;
+  title: string;
+  content: string;
+  platform: string;
+  status: string;
+  scheduled_at: string | null;
+  engagement_score: number;
+  hashtags: string[];
+  created_at: string;
+}
+
+export interface Activity {
+  id: string;
+  type: string;
+  description: string;
+  metadata: Record<string, any>;
+  created_at: string;
+}

@@ -28,6 +28,7 @@ import {
   processDocument,
   type DocumentRow,
 } from "../services/documents";
+import { supabase } from "../lib/supabase";
 
 const typeIcon = (type: string) => {
   switch (type) {
@@ -74,6 +75,10 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   const [selected, setSelected] = useState<DocumentRow | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DocumentRow | null>(null);
   const [reprocessingId, setReprocessingId] = useState<string | null>(null);
+  const [editingMeta, setEditingMeta] = useState<DocumentRow | null>(null);
+  const [metaTitle, setMetaTitle] = useState("");
+  const [metaCategory, setMetaCategory] = useState("");
+  const [metaSaving, setMetaSaving] = useState(false);
 
   const loadDocs = useCallback(async () => {
     setLoading(true);
@@ -169,6 +174,34 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
     { label: "Presentations", value: stats.presentations, icon: Presentation, color: "bg-amber-50 text-amber-600 ring-amber-100" },
     { label: "Indexed Documents", value: stats.indexed, icon: FileCheck2, color: "bg-emerald-50 text-emerald-600 ring-emerald-100" },
   ];
+
+  const handleSaveMeta = async () => {
+    if (!editingMeta) return;
+    setMetaSaving(true);
+    try {
+      const { error } = await supabase
+        .from("documents")
+        .update({ title: metaTitle, category: metaCategory })
+        .eq("id", editingMeta.id);
+      if (error) throw error;
+      const fresh = await getDocuments();
+      setDocs(fresh);
+      if (selected?.id === editingMeta.id) {
+        setSelected({ ...selected, title: metaTitle, category: metaCategory });
+      }
+      setEditingMeta(null);
+    } catch (err: any) {
+      setError(err.message || "Failed to update metadata");
+    } finally {
+      setMetaSaving(false);
+    }
+  };
+
+  const startEditMeta = (doc: DocumentRow) => {
+    setEditingMeta(doc);
+    setMetaTitle(doc.title);
+    setMetaCategory(doc.category);
+  };
 
   const handleDelete = async (doc: DocumentRow) => {
     try {
@@ -385,7 +418,7 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                                   )}
                                 </button>
                                 <button
-                                  onClick={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); startEditMeta(doc); }}
                                   className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
                                   title="Edit Metadata"
                                 >
@@ -592,6 +625,55 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Metadata Modal */}
+      {editingMeta && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4"
+          onClick={() => setEditingMeta(null)}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-slate-100 px-6 py-5">
+              <h3 className="text-base font-bold text-slate-900">Edit Metadata</h3>
+            </div>
+            <div className="space-y-4 px-6 py-5">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Title</label>
+                <input
+                  type="text"
+                  value={metaTitle}
+                  onChange={(e) => setMetaTitle(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Category</label>
+                <input
+                  type="text"
+                  value={metaCategory}
+                  onChange={(e) => setMetaCategory(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4">
+              <button
+                onClick={() => setEditingMeta(null)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveMeta}
+                disabled={metaSaving}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+              >
+                {metaSaving ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>

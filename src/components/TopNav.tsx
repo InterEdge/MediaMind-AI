@@ -1,15 +1,19 @@
 import { useState, useRef, useEffect } from "react";
 import { Menu, Search, Bell, ChevronDown } from "lucide-react";
 import type { Notification } from "../lib/supabase";
+import type { ViewId } from "../App";
 
 interface TopNavProps {
   onMenuClick: () => void;
   unreadCount: number;
   notifications: Notification[];
   onRefresh: () => void;
+  onNavigate: (v: ViewId) => void;
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
 }
 
-export default function TopNav({ onMenuClick, unreadCount, notifications, onRefresh }: TopNavProps) {
+export default function TopNav({ onMenuClick, unreadCount, notifications, onRefresh, onNavigate, searchQuery, onSearchChange }: TopNavProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -52,6 +56,8 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onRefr
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search documents, drafts, prompts..."
             className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-700 transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
           />
@@ -130,19 +136,13 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onRefr
                 <p className="text-xs text-slate-400">alex@mediamind.ai</p>
               </div>
               <div className="py-1">
-                {["My Profile", "Account Settings", "Billing & Plan", "Help Center"].map((item) => (
-                  <button
-                    key={item}
-                    className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50"
-                  >
-                    {item}
-                  </button>
-                ))}
+                <button onClick={() => onNavigate("settings")} className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50">My Profile</button>
+                <button onClick={() => onNavigate("settings")} className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50">Account Settings</button>
+                <button onClick={() => onNavigate("settings")} className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50">Billing & Plan</button>
+                <button onClick={() => onNavigate("knowledge")} className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50">Help Center</button>
               </div>
               <div className="border-t border-slate-100 py-1">
-                <button className="block w-full px-4 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50">
-                  Sign Out
-                </button>
+                <button onClick={() => onNavigate("dashboard")} className="block w-full px-4 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50">Sign Out</button>
               </div>
             </div>
           )}

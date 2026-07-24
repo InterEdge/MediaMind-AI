@@ -73,6 +73,12 @@ export async function getDocuments(): Promise<DocumentRow[]> {
 }
 
 export async function deleteDocument(id: string): Promise<void> {
+  const { data: doc } = await supabase.from("documents").select("file_path").eq("id", id).single();
+
+  if (doc?.file_path) {
+    await supabase.storage.from(BUCKET).remove([doc.file_path]);
+  }
+
   const { error } = await supabase.from("documents").delete().eq("id", id);
   if (error) throw error;
 }
