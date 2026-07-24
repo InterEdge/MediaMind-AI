@@ -13,6 +13,9 @@ export interface DocumentRow {
   tags: string[];
   uploaded_at: string;
   file_path: string | null;
+  extracted_text: string | null;
+  keywords: string[];
+  ai_status: string | null;
 }
 
 function formatFileSize(bytes: number): string {
@@ -112,4 +115,26 @@ export async function processDocument(documentId: string): Promise<void> {
     const errBody = await response.text();
     throw new Error(`Processing failed (${response.status}): ${errBody}`);
   }
+}
+
+export async function getDocumentById(id: string): Promise<DocumentRow | null> {
+  const { data, error } = await supabase
+    .from("documents")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as DocumentRow | null;
+}
+
+export type AiStage = "pending" | "extracting" | "ai_processing" | "ready" | "failed";
+
+export function getAiStage(doc: { ai_status: string | null; status: string }): AiStage {
+  if (doc.ai_status === "ready") return "ready";
+  if (doc.ai_status === "failed") return "failed";
+  if (doc.ai_status === "extracting") return "extracting";
+  if (doc.ai_status === "ai_processing") return "ai_processing";
+  if (doc.status === "Ready") return "ready";
+  return "pending";
 }

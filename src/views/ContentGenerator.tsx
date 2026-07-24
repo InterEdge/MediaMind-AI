@@ -8,15 +8,13 @@ import {
   Hash,
   Target,
   Zap,
-  FileText,
   ChevronDown,
   ChevronUp,
   AlertCircle,
   RefreshCw,
-  Plus,
 } from "lucide-react";
-import { supabase, type Prompt, type Draft } from "../lib/supabase";
-import { getDocuments, type DocumentRow } from "../services/documents";
+import { supabase, type Prompt } from "../lib/supabase";
+import { type DocumentRow } from "../services/documents";
 
 interface ContentGeneratorProps {
   prompts: Prompt[];

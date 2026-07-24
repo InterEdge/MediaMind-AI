@@ -15,7 +15,7 @@ import { getDocuments, type DocumentRow } from "./services/documents";
 
 export type ViewId = "dashboard" | "knowledge" | "generator" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
 
-interface DataState {
+export interface DataState {
   documents: DocumentRow[];
   drafts: Draft[];
   prompts: Prompt[];

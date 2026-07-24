@@ -29,6 +29,7 @@ import {
   type DocumentRow,
 } from "../services/documents";
 import { supabase } from "../lib/supabase";
+import { getAiStage } from "../services/documents";
 
 const typeIcon = (type: string) => {
   switch (type) {
@@ -98,15 +99,22 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
     loadDocs();
   }, [loadDocs, refreshKey]);
 
-  // Auto-refresh while any documents are in Processing status
-  const hasProcessing = docs.some((d) => d.status === "Processing");
+  // Auto-refresh while any documents are still processing
+  const hasProcessing = docs.some(
+    (d) => d.status === "Processing" || (d.ai_status && d.ai_status !== "ready" && d.ai_status !== "failed"),
+  );
   useEffect(() => {
     if (!hasProcessing) return;
-    const interval = setInterval(() => {
-      getDocuments().then(setDocs).catch(console.error);
-    }, 5000);
+    const interval = setInterval(async () => {
+      const fresh = await getDocuments();
+      setDocs(fresh);
+      if (selected) {
+        const updated = fresh.find((d) => d.id === selected.id);
+        if (updated) setSelected(updated);
+      }
+    }, 3000);
     return () => clearInterval(interval);
-  }, [hasProcessing]);
+  }, [hasProcessing, selected]);
 
   const handleReprocess = async (doc: DocumentRow) => {
     setReprocessingId(doc.id);
@@ -503,10 +511,27 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                 </div>
 
                 <div className="border-t border-slate-100 py-4">
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Summary</h4>
-                  <p className="text-sm leading-relaxed text-slate-600">
-                    {selected.summary || "No AI summary available yet. This document is awaiting AI indexing."}
-                  </p>
+                  <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <Sparkles className="h-3.5 w-3.5" /> AI Summary
+                  </h4>
+                  {(() => {
+                    const stage = getAiStage(selected);
+                    if (stage === "ready" && selected.summary) {
+                      return <p className="text-sm leading-relaxed text-slate-600">{selected.summary}</p>;
+                    }
+                    if (stage === "extracting" || stage === "ai_processing" || stage === "pending") {
+                      return (
+                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                          <span>{stage === "extracting" ? "Extracting text from document..." : stage === "ai_processing" ? "AI generating summary & keywords..." : "Waiting to start processing..."}</span>
+                        </div>
+                      );
+                    }
+                    if (stage === "failed") {
+                      return <p className="text-sm text-red-500">AI processing failed. Try reprocessing this document.</p>;
+                    }
+                    return <p className="text-sm text-slate-400">No AI summary available yet.</p>;
+                  })()}
                 </div>
 
                 <div className="border-t border-slate-100 py-4">
@@ -514,15 +539,21 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                     <Hash className="h-3.5 w-3.5" /> Keywords
                   </h4>
                   <div className="flex flex-wrap gap-1.5">
-                    {(selected.tags || []).length > 0 ? (
-                      selected.tags.map((kw) => (
-                        <span key={kw} className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                          {kw}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-xs text-slate-400">No keywords extracted yet</span>
-                    )}
+                    {(() => {
+                      const kws = (selected.keywords && selected.keywords.length > 0) ? selected.keywords : (selected.tags || []);
+                      if (kws.length > 0) {
+                        return kws.map((kw) => (
+                          <span key={kw} className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                            {kw}
+                          </span>
+                        ));
+                      }
+                      const stage = getAiStage(selected);
+                      if (stage === "extracting" || stage === "ai_processing" || stage === "pending") {
+                        return <span className="text-xs text-slate-400">Keywords will appear after AI processing completes...</span>;
+                      }
+                      return <span className="text-xs text-slate-400">No keywords extracted yet</span>;
+                    })()}
                   </div>
                 </div>
 
@@ -538,26 +569,29 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                   <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                     <Sparkles className="h-3.5 w-3.5" /> AI Status
                   </h4>
-                  <div className={`flex items-center gap-2 rounded-lg px-3 py-2.5 ${
-                    selected.status === "Indexed"
-                      ? "bg-emerald-50 text-emerald-700"
-                      : selected.status === "Processing"
-                      ? "bg-amber-50 text-amber-700"
-                      : "bg-sky-50 text-sky-700"
-                  }`}>
-                    {selected.status === "Processing" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-4 w-4" />
-                    )}
-                    <span className="text-xs font-medium">
-                      {selected.status === "Indexed"
-                        ? "Indexed — ready for AI search"
-                        : selected.status === "Processing"
-                        ? "Processing — AI indexing in progress"
-                        : "Ready — awaiting AI indexing"}
-                    </span>
-                  </div>
+                  {(() => {
+                    const stage = getAiStage(selected);
+                    const config: Record<string, { bg: string; icon: "check" | "spin" | "alert"; label: string }> = {
+                      ready: { bg: "bg-emerald-50 text-emerald-700", icon: "check", label: "Ready — AI summary & keywords generated" },
+                      extracting: { bg: "bg-amber-50 text-amber-700", icon: "spin", label: "Extracting — reading document text" },
+                      ai_processing: { bg: "bg-violet-50 text-violet-700", icon: "spin", label: "AI Processing — generating summary & keywords" },
+                      pending: { bg: "bg-slate-50 text-slate-600", icon: "spin", label: "Queued — waiting to start processing" },
+                      failed: { bg: "bg-red-50 text-red-700", icon: "alert", label: "Failed — AI processing encountered an error" },
+                    };
+                    const cfg = config[stage] || config.pending;
+                    return (
+                      <div className={`flex items-center gap-2 rounded-lg px-3 py-2.5 ${cfg.bg}`}>
+                        {cfg.icon === "spin" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : cfg.icon === "alert" ? (
+                          <AlertCircle className="h-4 w-4" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        <span className="text-xs font-medium">{cfg.label}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             ) : (
