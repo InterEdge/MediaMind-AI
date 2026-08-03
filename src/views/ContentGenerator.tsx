@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Sparkles,
   Copy,
@@ -12,9 +12,30 @@ import {
   ChevronUp,
   AlertCircle,
   RefreshCw,
+  Search,
+  X,
+  FileText,
+  Download,
+  Type,
+  Headphones,
+  Megaphone,
+  Mail,
+  Newspaper,
+  FileBarChart,
+  MessageSquare,
+  Send,
+  Trash2,
 } from "lucide-react";
-import { supabase, type Prompt } from "../lib/supabase";
+import { type Prompt } from "../lib/supabase";
 import { type DocumentRow } from "../services/documents";
+import {
+  generateContent,
+  saveGeneratedDraft,
+  logGenerationActivity,
+  buildGenerationPrompt,
+  downloadAsMarkdown,
+  type GeneratedResult,
+} from "../services/contentGenerator";
 
 interface ContentGeneratorProps {
   prompts: Prompt[];
@@ -23,24 +44,31 @@ interface ContentGeneratorProps {
 }
 
 const contentTypeOptions = [
-  "LinkedIn Post",
-  "Twitter Thread",
-  "Newsletter",
-  "Sales Email",
-  "Blog Post",
-  "Ad Copy",
+  { label: "LinkedIn Post", icon: Megaphone },
+  { label: "Facebook Post", icon: MessageSquare },
+  { label: "Twitter/X Post", icon: Send },
+  { label: "Twitter/X Thread", icon: Send },
+  { label: "Instagram Caption", icon: Hash },
+  { label: "Press Release", icon: Newspaper },
+  { label: "Newsletter", icon: Mail },
+  { label: "Blog Article", icon: FileBarChart },
+  { label: "Sales Email", icon: Mail },
 ];
 
-const toneOptions = ["Professional", "Conversational", "Authoritative", "Inspirational", "Analytical"];
-const audienceOptions = ["Media Buyers", "Agency Leaders", "Brand Marketers", "Ad Tech Professionals", "CMOs"];
+const toneOptions = ["Professional", "Conversational", "Authoritative", "Friendly", "Persuasive", "Educational"];
+const lengthOptions = ["Short", "Medium", "Long"];
+const audienceOptions = ["Media Buyers", "Agency Leaders", "Brand Marketers", "Ad Tech Professionals", "CMOs", "General Audience"];
 
 const platformMap: Record<string, string> = {
   "LinkedIn Post": "LinkedIn",
-  "Twitter Thread": "Twitter",
+  "Facebook Post": "Facebook",
+  "Twitter/X Post": "Twitter",
+  "Twitter/X Thread": "Twitter",
+  "Instagram Caption": "Instagram",
+  "Press Release": "PR",
   "Newsletter": "Email",
+  "Blog Article": "Blog",
   "Sales Email": "Email",
-  "Blog Post": "Blog",
-  "Ad Copy": "Advertising",
 };
 
 export default function ContentGenerator({ prompts, documents, onDraftCreated }: ContentGeneratorProps) {
@@ -48,61 +76,75 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("Professional");
   const [audience, setAudience] = useState("Media Buyers");
+  const [outputLength, setOutputLength] = useState("Medium");
   const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
-  const [showDocPicker, setShowDocPicker] = useState(false);
+  const [showDocPicker, setShowDocPicker] = useState(true);
+  const [docSearch, setDocSearch] = useState("");
   const [additionalInstructions, setAdditionalInstructions] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [output, setOutput] = useState("");
+  const [result, setResult] = useState<GeneratedResult | null>(null);
+  const [editableContent, setEditableContent] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-  const indexedDocs = documents.filter((d) => d.status === "Indexed" || d.status === "Ready");
+  const indexedDocs = useMemo(
+    () => documents.filter((d) => d.status === "Indexed" || d.status === "Ready" || d.ai_status === "ready"),
+    [documents],
+  );
+
+  const filteredDocs = useMemo(() => {
+    if (!docSearch.trim()) return indexedDocs;
+    const q = docSearch.toLowerCase();
+    return indexedDocs.filter(
+      (d) =>
+        d.title.toLowerCase().includes(q) ||
+        (d.summary || "").toLowerCase().includes(q) ||
+        (d.keywords || []).some((k) => k.toLowerCase().includes(q)) ||
+        d.category.toLowerCase().includes(q),
+    );
+  }, [indexedDocs, docSearch]);
+
+  const selectedDocs = useMemo(
+    () => indexedDocs.filter((d) => selectedDocIds.includes(d.id)),
+    [indexedDocs, selectedDocIds],
+  );
+
   const relevantPrompts = prompts.filter((p) => {
     if (contentType === "LinkedIn Post") return p.category === "LinkedIn";
-    if (contentType === "Ad Copy") return p.category === "Advertising";
     if (contentType === "Sales Email" || contentType === "Newsletter") return p.category === "Proposal" || p.category === "Strategy";
     return true;
   });
 
+  const canGenerate = (topic.trim() || selectedDocIds.length > 0 || additionalInstructions.trim()) && !generating;
+
   const handleGenerate = async () => {
-    if (!topic.trim()) return;
+    if (!canGenerate) return;
     setGenerating(true);
-    setOutput("");
     setError(null);
     setSaved(false);
 
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const params = {
+        contentType,
+        topic: topic.trim() || undefined,
+        tone,
+        audience,
+        outputLength,
+        documentIds: selectedDocIds,
+        additionalInstructions: additionalInstructions.trim() || undefined,
+      };
 
-      const response = await fetch(`${supabaseUrl}/functions/v1/generate-content`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${anonKey}`,
-          apikey: anonKey,
-        },
-        body: JSON.stringify({
-          contentType,
-          topic,
-          tone,
-          audience,
-          documentIds: selectedDocIds,
-          promptTemplate: selectedPrompt?.template || undefined,
-          additionalInstructions: additionalInstructions.trim() || undefined,
-        }),
-      });
+      const generated = await generateContent(params);
+      setResult(generated);
+      setEditableContent(generated.content);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Generation failed");
-      }
-
-      setOutput(data.content);
+      // Log generation activity
+      const wordCount = generated.content.split(/\s+/).filter(Boolean).length;
+      await logGenerationActivity(contentType, topic, selectedDocIds.length, wordCount);
     } catch (err: any) {
       setError(err.message || "Failed to generate content. Please try again.");
     } finally {
@@ -111,88 +153,135 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
   };
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(output);
+    navigator.clipboard.writeText(editableContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleSave = async () => {
-    if (!output) return;
+    if (!result || !editableContent) return;
     setSaving(true);
-    const title = topic.length > 60 ? topic.substring(0, 60) + "..." : topic;
-    const wordCount = output.split(/\s+/).length;
+    setError(null);
 
-    const { error: insertError } = await supabase.from("drafts").insert({
-      title: title.charAt(0).toUpperCase() + title.slice(1),
-      content: output,
-      platform: platformMap[contentType] || "LinkedIn",
-      status: "Draft",
-      word_count: wordCount,
-      ai_generated: true,
-    });
+    try {
+      const title = (topic || result.headline || result.contentType).substring(0, 80);
+      const wordCount = editableContent.split(/\s+/).filter(Boolean).length;
+      const generationPrompt = buildGenerationPrompt({
+        contentType,
+        topic: topic.trim() || undefined,
+        tone,
+        audience,
+        outputLength,
+        documentIds: selectedDocIds,
+        additionalInstructions: additionalInstructions.trim() || undefined,
+      });
 
-    if (insertError) {
-      setError("Failed to save draft: " + insertError.message);
+      await saveGeneratedDraft({
+        title,
+        content: editableContent,
+        platform: platformMap[contentType] || "LinkedIn",
+        wordCount,
+        sourceDocumentIds: selectedDocIds,
+        generationPrompt,
+        tone,
+        targetAudience: audience,
+        headline: result.headline,
+        cta: result.cta,
+        hashtags: result.hashtags,
+      });
+
+      setSaved(true);
+      onDraftCreated();
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err: any) {
+      setError(err.message || "Failed to save draft");
+    } finally {
       setSaving(false);
+    }
+  };
+
+  const handleClear = () => {
+    if (editableContent && !saved) {
+      setShowClearConfirm(true);
       return;
     }
+    doClear();
+  };
 
-    await supabase.from("activities").insert({
-      type: "generate",
-      description: `AI generated ${contentType}: "${title}"`,
-      metadata: { platform: platformMap[contentType], word_count: wordCount, content_type: contentType },
-    });
-
-    setSaving(false);
-    setSaved(true);
-    onDraftCreated();
-    setTimeout(() => setSaved(false), 3000);
+  const doClear = () => {
+    setResult(null);
+    setEditableContent("");
+    setError(null);
+    setSaved(false);
+    setShowClearConfirm(false);
   };
 
   const toggleDoc = (id: string) => {
-    setSelectedDocIds((prev) =>
-      prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id],
-    );
+    setSelectedDocIds((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
   };
+
+  const clearAllDocs = () => setSelectedDocIds([]);
+
+  const handleDownload = () => {
+    if (!result) return;
+    const title = topic || result.headline || result.contentType;
+    downloadAsMarkdown(title, editableContent, result.headline, result.cta, result.hashtags);
+  };
+
+  const wordCount = editableContent ? editableContent.split(/\s+/).filter(Boolean).length : 0;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Content Generator</h1>
-        <p className="mt-1 text-sm text-slate-500">Generate LinkedIn posts, ad copy, newsletters, and more — powered by AI with your knowledge base as context.</p>
+        <p className="mt-1 text-sm text-slate-500">
+          Generate LinkedIn posts, ad copy, newsletters, and more — powered by AI with your knowledge base as context.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {/* Left: Configuration */}
         <div className="space-y-4 lg:col-span-2">
+          {/* Content Type & Controls */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <h2 className="mb-4 text-sm font-semibold text-slate-800">Configure Your Content</h2>
 
             {/* Content Type */}
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Content Type</label>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Content Type
+              </label>
               <div className="flex flex-wrap gap-2">
-                {contentTypeOptions.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setContentType(t)}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                      contentType === t ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
+                {contentTypeOptions.map((t) => {
+                  const Icon = t.icon;
+                  return (
+                    <button
+                      key={t.label}
+                      onClick={() => setContentType(t.label)}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                        contentType === t.label
+                          ? "bg-blue-600 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {t.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Topic */}
+            {/* Topic / Title */}
             <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Topic</label>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Title / Topic (optional)
+              </label>
               <textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                rows={3}
+                rows={2}
                 placeholder="e.g. Programmatic advertising trends in 2025"
                 className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
               />
@@ -218,7 +307,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
               </div>
             </div>
 
-            {/* Audience */}
+            {/* Target Audience */}
             <div className="mt-4">
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 <Hash className="h-3.5 w-3.5" /> Target Audience
@@ -238,9 +327,31 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
               </div>
             </div>
 
+            {/* Output Length */}
+            <div className="mt-4">
+              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <Type className="h-3.5 w-3.5" /> Output Length
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {lengthOptions.map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => setOutputLength(l)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                      outputLength === l ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Additional Instructions */}
             <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Additional Instructions (optional)</label>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Additional Instructions (optional)
+              </label>
               <textarea
                 value={additionalInstructions}
                 onChange={(e) => setAdditionalInstructions(e.target.value)}
@@ -252,7 +363,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
 
             <button
               onClick={handleGenerate}
-              disabled={!topic.trim() || generating}
+              disabled={!canGenerate}
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {generating ? (
@@ -267,47 +378,123 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                 </>
               )}
             </button>
+            {!canGenerate && !generating && (
+              <p className="mt-2 text-center text-xs text-slate-400">
+                Enter a topic, select documents, or add instructions to generate
+              </p>
+            )}
           </div>
 
           {/* Knowledge Base Context */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <button
-              onClick={() => setShowDocPicker(!showDocPicker)}
-              className="flex w-full items-center justify-between"
-            >
+            <button onClick={() => setShowDocPicker(!showDocPicker)} className="flex w-full items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-800">Knowledge Base Context</h2>
-              {showDocPicker ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+              {showDocPicker ? (
+                <ChevronUp className="h-4 w-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              )}
             </button>
+
             {selectedDocIds.length > 0 && (
-              <p className="mt-1 text-xs text-blue-600">{selectedDocIds.length} document{selectedDocIds.length !== 1 ? "s" : ""} selected as context</p>
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-xs text-blue-600">
+                  {selectedDocIds.length} document{selectedDocIds.length !== 1 ? "s" : ""} selected as context
+                </p>
+                <button
+                  onClick={clearAllDocs}
+                  className="text-xs font-medium text-slate-400 transition hover:text-red-500"
+                >
+                  Clear all
+                </button>
+              </div>
             )}
+
             {showDocPicker && (
-              <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
-                {indexedDocs.length === 0 ? (
-                  <p className="text-xs text-slate-400">No indexed documents available. Upload and process documents first.</p>
-                ) : (
-                  indexedDocs.map((doc) => (
-                    <button
-                      key={doc.id}
-                      onClick={() => toggleDoc(doc.id)}
-                      className={`block w-full rounded-lg border p-3 text-left transition ${
-                        selectedDocIds.includes(doc.id)
-                          ? "border-blue-300 bg-blue-50"
-                          : "border-slate-100 hover:border-slate-200 hover:bg-slate-50"
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <div className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selectedDocIds.includes(doc.id) ? "border-blue-500 bg-blue-500" : "border-slate-300"}`}>
-                          {selectedDocIds.includes(doc.id) && <Check className="h-3 w-3 text-white" />}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-slate-700">{doc.title}</p>
-                          {doc.summary && <p className="mt-0.5 text-xs text-slate-400 line-clamp-2">{doc.summary}</p>}
-                        </div>
-                      </div>
-                    </button>
-                  ))
+              <div className="mt-3">
+                {/* Selected docs chips */}
+                {selectedDocs.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {selectedDocs.map((doc) => (
+                      <span
+                        key={doc.id}
+                        className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700"
+                      >
+                        <FileText className="h-3 w-3" />
+                        <span className="max-w-[120px] truncate">{doc.title}</span>
+                        <button
+                          onClick={() => toggleDoc(doc.id)}
+                          className="ml-0.5 rounded p-0.5 hover:bg-blue-100"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 )}
+
+                {/* Search */}
+                <div className="relative mb-2">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={docSearch}
+                    onChange={(e) => setDocSearch(e.target.value)}
+                    placeholder="Search documents..."
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                {/* Document list */}
+                <div className="max-h-64 space-y-2 overflow-y-auto">
+                  {filteredDocs.length === 0 ? (
+                    <p className="py-4 text-center text-xs text-slate-400">
+                      {indexedDocs.length === 0
+                        ? "No indexed documents available. Upload and process documents first."
+                        : "No documents match your search"}
+                    </p>
+                  ) : (
+                    filteredDocs.map((doc) => (
+                      <button
+                        key={doc.id}
+                        onClick={() => toggleDoc(doc.id)}
+                        className={`block w-full rounded-lg border p-3 text-left transition ${
+                          selectedDocIds.includes(doc.id)
+                            ? "border-blue-300 bg-blue-50"
+                            : "border-slate-100 hover:border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <div
+                            className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                              selectedDocIds.includes(doc.id) ? "border-blue-500 bg-blue-500" : "border-slate-300"
+                            }`}
+                          >
+                            {selectedDocIds.includes(doc.id) && <Check className="h-3 w-3 text-white" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-700">{doc.title}</p>
+                            {doc.summary && (
+                              <p className="mt-0.5 text-xs text-slate-400 line-clamp-2">{doc.summary}</p>
+                            )}
+                            {doc.keywords && doc.keywords.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {doc.keywords.slice(0, 3).map((kw) => (
+                                  <span
+                                    key={kw}
+                                    className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
+                                  >
+                                    {kw}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -344,8 +531,8 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
           <div className="sticky top-6 rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-800">Generated Output</h2>
-              {output && !generating && (
-                <div className="flex items-center gap-2">
+              {result && !generating && (
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handleCopy}
                     className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
@@ -359,6 +546,20 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
                     Regenerate
+                  </button>
+                  <button
+                    onClick={handleDownload}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Markdown
+                  </button>
+                  <button
+                    onClick={handleClear}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Clear
                   </button>
                   <button
                     onClick={handleSave}
@@ -390,16 +591,69 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                 <p className="mt-4 text-sm font-medium text-slate-600">Crafting your {contentType.toLowerCase()}...</p>
                 <p className="mt-1 text-xs text-slate-400">Analyzing tone, audience, and topic context with AI</p>
               </div>
-            ) : output ? (
-              <div className="rounded-xl bg-slate-50 p-5">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-700">{output}</pre>
-                <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3">
-                  <Zap className="h-3.5 w-3.5 text-amber-500" />
-                  <span className="text-xs text-slate-400">
-                    {output.split(/\s+/).length} words · {contentType}
-                    {selectedDocIds.length > 0 && ` · ${selectedDocIds.length} source document${selectedDocIds.length !== 1 ? "s" : ""}`}
-                  </span>
+            ) : result ? (
+              <div className="space-y-4">
+                {/* Headline */}
+                {result.headline && (
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600">
+                      <Headphones className="h-3.5 w-3.5" />
+                      Suggested Headline / Hook
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-slate-800">{result.headline}</p>
+                  </div>
+                )}
+
+                {/* Editable content */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Content (editable)
+                  </label>
+                  <textarea
+                    value={editableContent}
+                    onChange={(e) => setEditableContent(e.target.value)}
+                    rows={16}
+                    className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                    <Zap className="h-3.5 w-3.5 text-amber-500" />
+                    <span>
+                      {wordCount} words · {contentType}
+                      {selectedDocIds.length > 0 && ` · ${selectedDocIds.length} source document${selectedDocIds.length !== 1 ? "s" : ""}`}
+                    </span>
+                  </div>
                 </div>
+
+                {/* CTA */}
+                {result.cta && (
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">
+                      <Megaphone className="h-3.5 w-3.5" />
+                      Suggested Call to Action
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-slate-800">{result.cta}</p>
+                  </div>
+                )}
+
+                {/* Hashtags */}
+                {result.hashtags.length > 0 && (
+                  <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-4">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                      <Hash className="h-3.5 w-3.5" />
+                      Suggested Hashtags
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {result.hashtags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-md bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700"
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex h-96 flex-col items-center justify-center text-center">
@@ -407,12 +661,50 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                   <Sparkles className="h-8 w-8 text-slate-300" />
                 </div>
                 <p className="mt-4 text-sm font-medium text-slate-500">No content generated yet</p>
-                <p className="mt-1 text-xs text-slate-400">Enter a topic, optionally select knowledge base documents as context, and click Generate</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Enter a topic, optionally select knowledge base documents as context, and click Generate
+                </p>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Clear confirmation modal */}
+      {showClearConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4"
+          onClick={() => setShowClearConfirm(false)}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-4 p-6">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                <AlertCircle className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Clear generated content?</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  You have unsaved content. Clearing will discard it. This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doClear}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+              >
+                Clear content
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

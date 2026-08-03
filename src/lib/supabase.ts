@@ -33,6 +33,10 @@ export interface Draft {
   status: string;
   word_count: number | null;
   ai_generated: boolean | null;
+  source_document_ids: string[] | null;
+  generation_prompt: string | null;
+  tone: string | null;
+  target_audience: string | null;
   created_at: string;
   updated_at: string;
 }
