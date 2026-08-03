@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -168,14 +169,16 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Environment ────────────────────────────────────────────
-    const openrouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
+    // Load OpenRouter API key with automatic fallback to the backup key.
+    // See supabase/functions/_shared/openrouter.ts for details.
+    const openrouterApiKey = getOpenRouterApiKey();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!openrouterApiKey) {
       return new Response(
-        JSON.stringify({ error: "AI API key is not configured. Please add an OpenRouter API key in the project settings." }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({ error: "OpenRouter API key is not configured." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 

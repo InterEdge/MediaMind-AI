@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -241,7 +242,9 @@ Deno.serve(async (req: Request) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const openrouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
+    // Load OpenRouter API key with automatic fallback to the backup key.
+    // See supabase/functions/_shared/openrouter.ts for details.
+    const openrouterApiKey = getOpenRouterApiKey();
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
@@ -320,7 +323,7 @@ Deno.serve(async (req: Request) => {
         keywords = generateFallbackKeywords(doc.title, doc.category, extractedText);
       }
     } else {
-      console.log("No OPENROUTER_API_KEY set — using fallback summary");
+      console.log("No OpenRouter API key configured — using fallback summary");
       summary = `This document titled "${doc.title}" is a ${doc.type} file in the ${doc.category} category. Add an OpenRouter API key to enable AI-powered summaries and keyword extraction.`;
       keywords = generateFallbackKeywords(doc.title, doc.category, extractedText);
     }
