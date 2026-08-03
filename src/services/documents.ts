@@ -75,6 +75,17 @@ export async function getDocuments(): Promise<DocumentRow[]> {
   return (data || []) as DocumentRow[];
 }
 
+export async function getDocumentsLite(): Promise<DocumentRow[]> {
+  const { data, error } = await supabase
+    .from("documents")
+    .select("id,title,type,category,file_size,status,summary,tags,uploaded_at,file_path,keywords,ai_status")
+    .order("uploaded_at", { ascending: false });
+
+  if (error) throw error;
+
+  return (data || []) as DocumentRow[];
+}
+
 export async function deleteDocument(id: string): Promise<void> {
   const { data: doc } = await supabase.from("documents").select("file_path").eq("id", id).single();
 

@@ -21,15 +21,19 @@ import {
   Clock,
   AlertCircle,
   Inbox,
+  Filter,
 } from "lucide-react";
 import {
-  getDocuments,
+  getDocumentsLite,
   deleteDocument,
   processDocument,
   type DocumentRow,
 } from "../services/documents";
 import { supabase } from "../lib/supabase";
 import { getAiStage } from "../services/documents";
+import { useDocumentSearch } from "../hooks/useDocumentSearch";
+import { highlightText, highlightKeywords } from "../utils/highlight";
+import { getMatchedFieldLabel, type MatchedFieldName } from "../services/search";
 
 const typeIcon = (type: string) => {
   switch (type) {
@@ -60,18 +64,17 @@ const statusBadge = (status: string) => {
 const formatDate = (dateStr: string) =>
   new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
+const aiStatusOptions = ["All", "Ready", "Processing", "Failed"] as const;
+
 interface KnowledgeBaseProps {
   onUploadClick: () => void;
   refreshKey: number;
 }
 
 export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBaseProps) {
-  const [docs, setDocs] = useState<DocumentRow[]>([]);
+  const [allDocs, setAllDocs] = useState<DocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("All");
-  const [categoryFilter, setCategoryFilter] = useState("All");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "alpha">("newest");
   const [selected, setSelected] = useState<DocumentRow | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DocumentRow | null>(null);
@@ -81,12 +84,14 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   const [metaCategory, setMetaCategory] = useState("");
   const [metaSaving, setMetaSaving] = useState(false);
 
+  const search = useDocumentSearch({ initialDocs: allDocs, debounceMs: 250 });
+
   const loadDocs = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await getDocuments();
-      setDocs(data);
+      const data = await getDocumentsLite();
+      setAllDocs(data);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to load documents");
@@ -100,14 +105,14 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   }, [loadDocs, refreshKey]);
 
   // Auto-refresh while any documents are still processing
-  const hasProcessing = docs.some(
+  const hasProcessing = allDocs.some(
     (d) => d.status === "Processing" || (d.ai_status && d.ai_status !== "ready" && d.ai_status !== "failed"),
   );
   useEffect(() => {
     if (!hasProcessing) return;
     const interval = setInterval(async () => {
-      const fresh = await getDocuments();
-      setDocs(fresh);
+      const fresh = await getDocumentsLite();
+      setAllDocs(fresh);
       if (selected) {
         const updated = fresh.find((d) => d.id === selected.id);
         if (updated) setSelected(updated);
@@ -119,20 +124,17 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   const handleReprocess = async (doc: DocumentRow) => {
     setReprocessingId(doc.id);
     try {
-      // Optimistically set status to Processing
-      setDocs((prev) =>
-        prev.map((d) => (d.id === doc.id ? { ...d, status: "Processing" } : d)),
+      setAllDocs((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "Processing", ai_status: "extracting" } : d)),
       );
       await processDocument(doc.id);
-      // Refresh to get the updated summary/keywords
-      const fresh = await getDocuments();
-      setDocs(fresh);
+      const fresh = await getDocumentsLite();
+      setAllDocs(fresh);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to reprocess document");
-      // Revert status on failure
-      setDocs((prev) =>
-        prev.map((d) => (d.id === doc.id ? { ...d, status: doc.status } : d)),
+      setAllDocs((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: doc.status, ai_status: doc.ai_status } : d)),
       );
     } finally {
       setReprocessingId(null);
@@ -140,39 +142,35 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   };
 
   const categories = useMemo(() => {
-    const set = new Set(docs.map((d) => d.category));
+    const set = new Set(allDocs.map((d) => d.category));
     return ["All", ...Array.from(set)];
-  }, [docs]);
+  }, [allDocs]);
 
   const types = ["All", "PDF", "Word", "Presentation"];
 
-  const filtered = useMemo(() => {
-    let result = docs.filter((d) => {
-      const matchSearch =
-        d.title.toLowerCase().includes(search.toLowerCase()) ||
-        (d.tags || []).some((k) => k.toLowerCase().includes(search.toLowerCase()));
-      const matchType = typeFilter === "All" || d.type === typeFilter;
-      const matchCat = categoryFilter === "All" || d.category === categoryFilter;
-      return matchSearch && matchType && matchCat;
-    });
-
-    result = [...result].sort((a, b) => {
+  // Apply sort to search results
+  const displayResults = useMemo(() => {
+    const results = [...search.results];
+    if (search.isSearchActive) {
+      // When searching, keep relevance ranking (score-based)
+      return results;
+    }
+    // When not searching, apply user's sort preference
+    return results.sort((a, b) => {
       if (sortBy === "newest")
-        return new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime();
+        return new Date(b.doc.uploaded_at).getTime() - new Date(a.doc.uploaded_at).getTime();
       if (sortBy === "oldest")
-        return new Date(a.uploaded_at).getTime() - new Date(b.uploaded_at).getTime();
-      return a.title.localeCompare(b.title);
+        return new Date(a.doc.uploaded_at).getTime() - new Date(b.doc.uploaded_at).getTime();
+      return a.doc.title.localeCompare(b.doc.title);
     });
-
-    return result;
-  }, [docs, search, typeFilter, categoryFilter, sortBy]);
+  }, [search.results, search.isSearchActive, sortBy]);
 
   const stats = {
-    total: docs.length,
-    pdfs: docs.filter((d) => d.type === "PDF").length,
-    word: docs.filter((d) => d.type === "Word").length,
-    presentations: docs.filter((d) => d.type === "Presentation").length,
-    indexed: docs.filter((d) => d.status === "Indexed").length,
+    total: allDocs.length,
+    pdfs: allDocs.filter((d) => d.type === "PDF").length,
+    word: allDocs.filter((d) => d.type === "Word").length,
+    presentations: allDocs.filter((d) => d.type === "Presentation").length,
+    indexed: allDocs.filter((d) => d.status === "Indexed" || d.ai_status === "ready").length,
   };
 
   const statCards = [
@@ -192,8 +190,8 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
         .update({ title: metaTitle, category: metaCategory })
         .eq("id", editingMeta.id);
       if (error) throw error;
-      const fresh = await getDocuments();
-      setDocs(fresh);
+      const fresh = await getDocumentsLite();
+      setAllDocs(fresh);
       if (selected?.id === editingMeta.id) {
         setSelected({ ...selected, title: metaTitle, category: metaCategory });
       }
@@ -214,7 +212,7 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   const handleDelete = async (doc: DocumentRow) => {
     try {
       await deleteDocument(doc.id);
-      setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      setAllDocs((prev) => prev.filter((d) => d.id !== doc.id));
       if (selected?.id === doc.id) setSelected(null);
     } catch (err: any) {
       console.error(err);
@@ -222,6 +220,15 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
     }
     setDeleteConfirm(null);
   };
+
+  // Build a lookup map for match info by doc id
+  const matchMap = useMemo(() => {
+    const map = new Map<string, { matchedFields: { field: MatchedFieldName; snippet: string }[]; score: number }>();
+    for (const r of search.results) {
+      map.set(r.doc.id, { matchedFields: r.matchedFields, score: r.score });
+    }
+    return map;
+  }, [search.results]);
 
   return (
     <div className="space-y-6">
@@ -269,25 +276,41 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
           {/* Search & Filters */}
           <div className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="flex flex-col gap-3">
+              {/* Search bar with clear button */}
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
                   type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search documents by name or keyword..."
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  value={search.query}
+                  onChange={(e) => search.setQuery(e.target.value)}
+                  placeholder="Search across titles, summaries, keywords, and full document text..."
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-10 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
+                {search.loading && (
+                  <Loader2 className="absolute right-9 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-blue-400" />
+                )}
+                {search.query && !search.loading && (
+                  <button
+                    onClick={search.clearSearch}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                    title="Clear search"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+
+              {/* Filters row */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
+                {/* Type filter */}
                 <div className="flex items-center gap-1.5 overflow-x-auto">
                   <span className="shrink-0 text-xs font-medium text-slate-400">Type:</span>
                   {types.map((t) => (
                     <button
                       key={t}
-                      onClick={() => setTypeFilter(t)}
+                      onClick={() => search.setFilters({ type: t })}
                       className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
-                        typeFilter === t
+                        search.filters.type === t
                           ? "bg-blue-600 text-white"
                           : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                       }`}
@@ -296,9 +319,11 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                     </button>
                   ))}
                 </div>
+
+                {/* Category filter */}
                 <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  value={search.filters.category}
+                  onChange={(e) => search.setFilters({ category: e.target.value })}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 >
                   {categories.map((c) => (
@@ -307,24 +332,52 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                     </option>
                   ))}
                 </select>
+
+                {/* AI Status filter */}
                 <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "alpha")}
-                  className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  value={search.filters.aiStatus}
+                  onChange={(e) => search.setFilters({ aiStatus: e.target.value })}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 >
-                  <option value="newest">Newest First</option>
-                  <option value="oldest">Oldest First</option>
-                  <option value="alpha">Alphabetical</option>
+                  {aiStatusOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s === "All" ? "All AI Status" : `AI: ${s}`}
+                    </option>
+                  ))}
                 </select>
+
+                {/* Sort - only when not actively searching */}
+                {!search.isSearchActive && (
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "alpha")}
+                    className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="alpha">Alphabetical</option>
+                  </select>
+                )}
               </div>
+
+              {/* Active filter indicator */}
+              {(search.filters.type !== "All" || search.filters.category !== "All" || search.filters.aiStatus !== "All") && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                  <Filter className="h-3 w-3" />
+                  <span>
+                    Filters active
+                    {search.isSearchActive && search.results.length > 0 && ` · ${search.results.length} result${search.results.length === 1 ? "" : "s"}`}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Error banner */}
-          {error && (
+          {(error || search.error) && (
             <div className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{error}</span>
+              <span>{search.error || error}</span>
             </div>
           )}
 
@@ -349,31 +402,53 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {filtered.length === 0 ? (
+                    {displayResults.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-4 py-16">
                           <div className="flex flex-col items-center justify-center text-center">
                             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
-                              <Inbox className="h-7 w-7 text-slate-300" />
+                              {search.isSearchActive ? (
+                                <Search className="h-7 w-7 text-slate-300" />
+                              ) : (
+                                <Inbox className="h-7 w-7 text-slate-300" />
+                              )}
                             </div>
                             <p className="mt-4 text-sm font-medium text-slate-500">
-                              {docs.length === 0 ? "No documents yet" : "No documents match your filters"}
+                              {allDocs.length === 0
+                                ? "No documents yet"
+                                : search.isSearchActive
+                                ? `No results for "${search.query}"`
+                                : "No documents match your filters"}
                             </p>
                             <p className="mt-1 text-xs text-slate-400">
-                              {docs.length === 0
+                              {allDocs.length === 0
                                 ? "Upload your first document to get started"
-                                : "Try adjusting your search or filters"}
+                                : search.isSearchActive
+                                ? "Try different keywords or clear your search"
+                                : "Try adjusting your filters"}
                             </p>
+                            {search.isSearchActive && (
+                              <button
+                                onClick={search.clearSearch}
+                                className="mt-3 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-200"
+                              >
+                                Clear search
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
                     ) : (
-                      filtered.map((doc) => {
+                      displayResults.map((result) => {
+                        const doc = result.doc;
                         const ti = typeIcon(doc.type);
                         const TypeIcon = ti.icon;
                         const sb = statusBadge(doc.status);
                         const StatusIcon = sb.icon;
                         const isSelected = selected?.id === doc.id;
+                        const matchInfo = matchMap.get(doc.id);
+                        const query = search.query;
+
                         return (
                           <tr
                             key={doc.id}
@@ -387,7 +462,21 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${ti.color}`}>
                                   <TypeIcon className="h-4 w-4" />
                                 </div>
-                                <span className="text-sm font-medium text-slate-800 line-clamp-1">{doc.title}</span>
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium text-slate-800 line-clamp-1">
+                                    {highlightText(doc.title, query)}
+                                  </div>
+                                  {/* Match reasons */}
+                                  {matchInfo && matchInfo.matchedFields.length > 0 && (
+                                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                      {matchInfo.matchedFields.slice(0, 3).map((mf, i) => (
+                                        <span key={i} className="inline-flex items-center gap-0.5 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">
+                                          {getMatchedFieldLabel(mf.field)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </td>
                             <td className="hidden px-4 py-3 sm:table-cell">
@@ -465,7 +554,9 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                     })()}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-slate-900 leading-snug">{selected.title}</h3>
+                    <h3 className="text-sm font-bold text-slate-900 leading-snug">
+                      {highlightText(selected.title, search.query)}
+                    </h3>
                     <p className="mt-0.5 text-xs text-slate-400">{selected.type} · {selected.file_size}</p>
                   </div>
                   <button
@@ -517,7 +608,11 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                   {(() => {
                     const stage = getAiStage(selected);
                     if (stage === "ready" && selected.summary) {
-                      return <p className="text-sm leading-relaxed text-slate-600">{selected.summary}</p>;
+                      return (
+                        <p className="text-sm leading-relaxed text-slate-600">
+                          {highlightText(selected.summary, search.query)}
+                        </p>
+                      );
                     }
                     if (stage === "extracting" || stage === "ai_processing" || stage === "pending") {
                       return (
@@ -542,11 +637,7 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
                     {(() => {
                       const kws = (selected.keywords && selected.keywords.length > 0) ? selected.keywords : (selected.tags || []);
                       if (kws.length > 0) {
-                        return kws.map((kw) => (
-                          <span key={kw} className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                            {kw}
-                          </span>
-                        ));
+                        return highlightKeywords(kws, search.query);
                       }
                       const stage = getAiStage(selected);
                       if (stage === "extracting" || stage === "ai_processing" || stage === "pending") {
@@ -606,7 +697,7 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
               </div>
             )}
 
-            {/* Future AI Section */}
+            {/* AI Knowledge Search info card */}
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/50 p-5">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-200 text-slate-400">
@@ -656,7 +747,7 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
               </button>
               <button
                 onClick={() => handleDelete(deleteConfirm)}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+                className="rounded-lg bg-red-600 px-4 py-2 sm font-semibold text-white transition hover:bg-red-700"
               >
                 Delete
               </button>
