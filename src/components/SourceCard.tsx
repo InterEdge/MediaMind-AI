@@ -56,6 +56,10 @@ export default function SourceCard({ source, onNavigate }: SourceCardProps) {
           {source.excerpt}
         </p>
       )}
+      <div className="flex items-center gap-1 text-[10px] text-slate-400">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400" />
+        <span>Relevant source</span>
+      </div>
     </button>
   );
 }

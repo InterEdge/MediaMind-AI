@@ -139,6 +139,8 @@ function App() {
                 setSidebarOpen(false);
               }}
               onDraftCreated={() => setRefreshKey((k) => k + 1)}
+              onNavigateToKnowledgeBase={() => { setCurrentView("knowledge"); setSidebarOpen(false); }}
+              onOpenDrafts={() => { setCurrentView("drafts"); setSidebarOpen(false); }}
             />
           )}
           {currentView === "generator" && (
