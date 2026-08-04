@@ -55,14 +55,15 @@ export default function ChatMessageItem({
 }: ChatMessageProps) {
   const [sourcesExpanded, setSourcesExpanded] = useState(true);
   const [showFollowUps, setShowFollowUps] = useState(false);
+  const safeSources = Array.isArray(message.sources) ? message.sources : [];
 
   const handleCopy = useCallback(() => {
     onCopy(message.content, message.id);
   }, [onCopy, message.content, message.id]);
 
   const handleCreateDraft = useCallback(() => {
-    onCreateDraft(message.content, message.id, message.sources);
-  }, [onCreateDraft, message.content, message.id, message.sources]);
+    onCreateDraft(message.content, message.id, safeSources);
+  }, [onCreateDraft, message.content, message.id, safeSources]);
 
   const handleRegenerate = useCallback(() => {
     onRegenerate();
@@ -91,7 +92,7 @@ export default function ChatMessageItem({
           <MarkdownRenderer content={message.content} />
 
           {/* Sources section */}
-          {message.sources && message.sources.length > 0 && (
+          {safeSources.length > 0 && (
             <div className="mt-3 border-t border-slate-100 pt-3">
               <button
                 onClick={() => setSourcesExpanded((v) => !v)}
@@ -99,7 +100,7 @@ export default function ChatMessageItem({
                 aria-expanded={sourcesExpanded}
                 aria-label="Toggle sources"
               >
-                Sources ({message.sources.length})
+                Sources ({safeSources.length})
                 {sourcesExpanded ? (
                   <ChevronUp className="h-3.5 w-3.5" />
                 ) : (
@@ -108,7 +109,7 @@ export default function ChatMessageItem({
               </button>
               {sourcesExpanded && (
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {message.sources.map((source) => (
+                  {safeSources.map((source) => (
                     <SourceCard
                       key={source.id}
                       source={source}

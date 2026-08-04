@@ -9,6 +9,7 @@ import {
   updateChatSessionTitle,
   generateSessionTitle,
   logChatActivity,
+  normalizeSources,
   type ChatSession,
   type ChatMessage,
   type HistoryMessage,
@@ -106,6 +107,13 @@ export function useKnowledgeChat(): UseKnowledgeChatReturn {
     });
   }, []);
 
+  const normalizeMessages = useCallback((items: ChatMessage[]): ChatMessage[] => {
+    return items.map((msg) => ({
+      ...msg,
+      sources: normalizeSources(msg.sources),
+    }));
+  }, []);
+
   const runAssistant = useCallback(
     async (question: string, existingSession: ChatSession | null, isRegenerate: boolean) => {
       const reqId = ++requestCounter.current;
@@ -138,8 +146,9 @@ export function useKnowledgeChat(): UseKnowledgeChatReturn {
         try {
           const userMsg = await saveChatMessage(session.id, "user", question, null);
           if (reqId !== requestCounter.current) return;
-          setMessages((prev) => [...prev, userMsg]);
-          messagesRef.current = [...messagesRef.current, userMsg];
+          const normalizedUserMsg = { ...userMsg, sources: normalizeSources(userMsg.sources) };
+          setMessages((prev) => [...prev, normalizedUserMsg]);
+          messagesRef.current = [...messagesRef.current, normalizedUserMsg];
         } catch (err: any) {
           if (reqId !== requestCounter.current) return;
           setError(err.message || "Failed to save message");
@@ -166,8 +175,9 @@ export function useKnowledgeChat(): UseKnowledgeChatReturn {
         const assistantMsg = await saveChatMessage(session.id, "assistant", result.answer, result.sources);
         if (reqId !== requestCounter.current) return;
 
-        setMessages((prev) => [...prev, assistantMsg]);
-        messagesRef.current = [...messagesRef.current, assistantMsg];
+        const normalizedAssistantMsg = { ...assistantMsg, sources: normalizeSources(assistantMsg.sources) };
+        setMessages((prev) => [...prev, normalizedAssistantMsg]);
+        messagesRef.current = [...messagesRef.current, normalizedAssistantMsg];
         setLastFollowUps(result.follow_ups);
         setLastQuestion(question);
         lastQuestionRef.current = question;
@@ -272,7 +282,7 @@ export function useKnowledgeChat(): UseKnowledgeChatReturn {
 
         sessionRef.current = s;
         setCurrentSession(s);
-        const msgs = await getChatMessages(sessionId);
+        const msgs = normalizeMessages(await getChatMessages(sessionId));
         if (reqId !== requestCounter.current) return;
 
         setMessages(msgs);

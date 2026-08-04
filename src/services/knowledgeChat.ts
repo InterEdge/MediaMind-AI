@@ -37,6 +37,57 @@ export interface HistoryMessage {
   content: string;
 }
 
+export function normalizeSources(value: unknown): ChatSource[] {
+  const isValidSource = (entry: unknown): entry is ChatSource => {
+    if (!entry || typeof entry !== "object") return false;
+
+    const source = entry as Record<string, unknown>;
+    const id = typeof source.id === "string" ? source.id.trim() : "";
+    const title = typeof source.title === "string" ? source.title.trim() : "";
+    const category = typeof source.category === "string" ? source.category.trim() : "";
+    const type = typeof source.type === "string" ? source.type.trim() : "";
+    const excerpt = typeof source.excerpt === "string" ? source.excerpt : "";
+    const citationNumber = Number(source.citation_number);
+
+    return (
+      Boolean(id) &&
+      Boolean(title) &&
+      Boolean(category) &&
+      Boolean(type) &&
+      Number.isFinite(citationNumber) &&
+      citationNumber >= 0 &&
+      typeof excerpt === "string"
+    );
+  };
+
+  if (Array.isArray(value)) {
+    return value.filter(isValidSource);
+  }
+
+  if (typeof value === "string") {
+    try {
+      return normalizeSources(JSON.parse(value));
+    } catch {
+      return [];
+    }
+  }
+
+  if (value && typeof value === "object") {
+    const candidate = value as Record<string, unknown>;
+
+    if (Array.isArray(candidate.sources)) {
+      return normalizeSources(candidate.sources);
+    }
+
+    const nestedArray = Object.values(candidate).find(Array.isArray);
+    if (nestedArray) {
+      return normalizeSources(nestedArray);
+    }
+  }
+
+  return [];
+}
+
 const MAX_HISTORY = 10;
 
 export async function askKnowledgeBase(
@@ -67,7 +118,7 @@ export async function askKnowledgeBase(
 
   return {
     answer: data.answer || "",
-    sources: Array.isArray(data.sources) ? data.sources : [],
+    sources: normalizeSources(data.sources),
     retrieved_document_ids: Array.isArray(data.retrieved_document_ids) ? data.retrieved_document_ids : [],
     follow_ups: Array.isArray(data.follow_ups) ? data.follow_ups : [],
   };
@@ -102,7 +153,11 @@ export async function getChatMessages(sessionId: string): Promise<ChatMessage[]>
     .order("created_at", { ascending: true });
 
   if (error) throw new Error(`Failed to load messages: ${error.message}`);
-  return (data || []) as ChatMessage[];
+
+  return (data || []).map((message) => ({
+    ...message,
+    sources: normalizeSources(message?.sources ?? []),
+  })) as ChatMessage[];
 }
 
 export async function saveChatMessage(
@@ -123,7 +178,11 @@ export async function saveChatMessage(
     .single();
 
   if (error) throw new Error(`Failed to save message: ${error.message}`);
-  return data as ChatMessage;
+
+  return {
+    ...data,
+    sources: normalizeSources(data?.sources ?? []),
+  } as ChatMessage;
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
