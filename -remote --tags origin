@@ -1,0 +1,955 @@
+[33mcommit e16456ad1b8b6ebec046965aed8c6c07072ef7db[m[33m ([m[1;33mtag: [m[1;33mv1.0-mvp[m[33m)[m
+Author: InterEdge <35651829+InterEdge@users.noreply.github.com>
+Date:   Mon Aug 3 10:23:22 2026 +0100
+
+    Added 20260803091838_add_search_indexes.sql
+
+[1mdiff --git a/src/hooks/useDocumentSearch.ts b/src/hooks/useDocumentSearch.ts[m
+[1mnew file mode 100644[m
+[1mindex 0000000..4398a78[m
+[1m--- /dev/null[m
+[1m+++ b/src/hooks/useDocumentSearch.ts[m
+[36m@@ -0,0 +1,111 @@[m
+[32m+[m[32mimport { useState, useEffect, useRef, useCallback } from "react";[m
+[32m+[m[32mimport {[m
+[32m+[m[32m  searchDocuments,[m
+[32m+[m[32m  type SearchFilters,[m
+[32m+[m[32m  type SearchResult,[m
+[32m+[m[32m} from "../services/search";[m
+[32m+[m[32mimport type { DocumentRow } from "../services/documents";[m
+[32m+[m
+[32m+[m[32minterface UseDocumentSearchOptions {[m
+[32m+[m[32m  initialDocs?: DocumentRow[];[m
+[32m+[m[32m  debounceMs?: number;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32minterface UseDocumentSearchReturn {[m
+[32m+[m[32m  query: string;[m
+[32m+[m[32m  setQuery: (q: string) => void;[m
+[32m+[m[32m  filters: SearchFilters;[m
+[32m+[m[32m  setFilters: (f: Partial<SearchFilters>) => void;[m
+[32m+[m[32m  results: SearchResult[];[m
+[32m+[m[32m  loading: boolean;[m
+[32m+[m[32m  error: string | null;[m
+[32m+[m[32m  isSearchActive: boolean;[m
+[32m+[m[32m  clearSearch: () => void;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mconst DEFAULT_FILTERS: SearchFilters = {[m
+[32m+[m[32m  type: "All",[m
+[32m+[m[32m  category: "All",[m
+[32m+[m[32m  aiStatus: "All",[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mexport function useDocumentSearch({[m
+[32m+[m[32m  initialDocs,[m
+[32m+[m[32m  debounceMs = 250,[m
+[32m+[m[32m}: UseDocumentSearchOptions = {}): UseDocumentSearchReturn {[m
+[32m+[m[32m  const [query, setQuery] = useState("");[m
+[32m+[m[32m  const [filters, setFiltersState] = useState<SearchFilters>(DEFAULT_FILTERS);[m
+[32m+[m[32m  const [results, setResults] = useState<SearchResult[]>([]);[m
+[32m+[m[32m  const [loading, setLoading] = useState(false);[m
+[32m+[m[32m  const [error, setError] = useState<string | null>(null);[m
+[32m+[m[32m  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);[m
+[32m+[m[32m  const currentRequestId = useRef(0);[m
+[32m+[m
+[32m+[m[32m  const setFilters = useCallback((f: Partial<SearchFilters>) => {[m
+[32m+[m[32m    setFiltersState((prev) => ({ ...prev, ...f }));[m
+[32m+[m[32m  }, []);[m
+[32m+[m
+[32m+[m[32m  const clearSearch = useCallback(() => {[m
+[32m+[m[32m    setQuery("");[m
+[32m+[m[32m    setError(null);[m
+[32m+[m[32m  }, []);[m
+[32m+[m
+[32m+[m[32m  useEffect(() => {[m
+[32m+[m[32m    if (debounceTimer.current) clearTimeout(debounceTimer.current);[m
+[32m+[m
+[32m+[m[32m    const requestId = ++currentRequestId.current;[m
+[32m+[m
+[32m+[m[32m    if (!query.trim()) {[m
+[32m+[m[32m      setLoading(true);[m
+[32m+[m[32m      searchDocuments("", filters, initialDocs)[m
+[32m+[m[32m        .then((res) => {[m
+[32m+[m[32m          if (requestId !== currentRequestId.current) return;[m
+[32m+[m[32m          setResults(res);[m
+[32m+[m[32m          setError(null);[m
+[32m+[m[32m        })[m
+[32m+[m[32m        .catch((err: Error) => {[m
+[32m+[m[32m          if (requestId !== currentRequestId.current) return;[m
+[32m+[m[32m          setError(err.message || "Search failed");[m
+[32m+[m[32m        })[m
+[32m+[m[32m        .finally(() => {[m
+[32m+[m[32m          if (requestId !== currentRequestId.current) return;[m
+[32m+[m[32m          setLoading(false);[m
+[32m+[m[32m        });[m
+[32m+[m[32m      return;[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    setLoading(true);[m
+[32m+[m[32m    debounceTimer.current = setTimeout(() => {[m
+[32m+[m[32m      searchDocuments(query, filters, initialDocs)[m
+[32m+[m[32m        .then((res) => {[m
+[32m+[m[32m          if (requestId !== currentRequestId.current) return;[m
+[32m+[m[32m          setResults(res);[m
+[32m+[m[32m          setError(null);[m
+[32m+[m[32m        })[m
+[32m+[m[32m        .catch((err: Error) => {[m
+[32m+[m[32m          if (requestId !== currentRequestId.current) return;[m
+[32m+[m[32m          setError(err.message || "Search failed");[m
+[32m+[m[32m        })[m
+[32m+[m[32m        .finally(() => {[m
+[32m+[m[32m          if (requestId !== currentRequestId.current) return;[m
+[32m+[m[32m          setLoading(false);[m
+[32m+[m[32m        });[m
+[32m+[m[32m    }, debounceMs);[m
+[32m+[m
+[32m+[m[32m    return () => {[m
+[32m+[m[32m      if (debounceTimer.current) clearTimeout(debounceTimer.current);[m
+[32m+[m[32m    };[m
+[32m+[m[32m  }, [query, filters, initialDocs, debounceMs]);[m
+[32m+[m
+[32m+[m[32m  return {[m
+[32m+[m[32m    query,[m
+[32m+[m[32m    setQuery,[m
+[32m+[m[32m    filters,[m
+[32m+[m[32m    setFilters,[m
+[32m+[m[32m    results,[m
+[32m+[m[32m    loading,[m
+[32m+[m[32m    error,[m
+[32m+[m[32m    isSearchActive: query.trim().length > 0,[m
+[32m+[m[32m    clearSearch,[m
+[32m+[m[32m  };[m
+[32m+[m[32m}[m
+[1mdiff --git a/src/services/documents.ts b/src/services/documents.ts[m
+[1mindex ce5e754..ec1fc30 100644[m
+[1m--- a/src/services/documents.ts[m
+[1m+++ b/src/services/documents.ts[m
+[36m@@ -75,6 +75,17 @@[m [mexport async function getDocuments(): Promise<DocumentRow[]> {[m
+   return (data || []) as DocumentRow[];[m
+ }[m
+ [m
+[32m+[m[32mexport async function getDocumentsLite(): Promise<DocumentRow[]> {[m
+[32m+[m[32m  const { data, error } = await supabase[m
+[32m+[m[32m    .from("documents")[m
+[32m+[m[32m    .select("id,title,type,category,file_size,status,summary,tags,uploaded_at,file_path,keywords,ai_status")[m
+[32m+[m[32m    .order("uploaded_at", { ascending: false });[m
+[32m+[m
+[32m+[m[32m  if (error) throw error;[m
+[32m+[m
+[32m+[m[32m  return (data || []) as DocumentRow[];[m
+[32m+[m[32m}[m
+[32m+[m
+ export async function deleteDocument(id: string): Promise<void> {[m
+   const { data: doc } = await supabase.from("documents").select("file_path").eq("id", id).single();[m
+ [m
+[1mdiff --git a/src/services/search.ts b/src/services/search.ts[m
+[1mnew file mode 100644[m
+[1mindex 0000000..d62ce73[m
+[1m--- /dev/null[m
+[1m+++ b/src/services/search.ts[m
+[36m@@ -0,0 +1,225 @@[m
+[32m+[m[32mimport { supabase } from "../lib/supabase";[m
+[32m+[m[32mimport type { DocumentRow } from "./documents";[m
+[32m+[m
+[32m+[m[32mexport interface SearchFilters {[m
+[32m+[m[32m  type: string;[m
+[32m+[m[32m  category: string;[m
+[32m+[m[32m  aiStatus: string;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mexport interface SearchResult {[m
+[32m+[m[32m  doc: DocumentRow;[m
+[32m+[m[32m  score: number;[m
+[32m+[m[32m  matchedFields: MatchedField[];[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mexport type MatchedFieldName =[m
+[32m+[m[32m  | "title"[m
+[32m+[m[32m  | "summary"[m
+[32m+[m[32m  | "extracted_text"[m
+[32m+[m[32m  | "keywords"[m
+[32m+[m[32m  | "category"[m
+[32m+[m[32m  | "type";[m
+[32m+[m
+[32m+[m[32mexport interface MatchedField {[m
+[32m+[m[32m  field: MatchedFieldName;[m
+[32m+[m[32m  snippet: string;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mconst FIELD_WEIGHTS: Record<MatchedFieldName, number> = {[m
+[32m+[m[32m  title: 100,[m
+[32m+[m[32m  summary: 50,[m
+[32m+[m[32m  keywords: 30,[m
+[32m+[m[32m  category: 15,[m
+[32m+[m[32m  type: 10,[m
+[32m+[m[32m  extracted_text: 5,[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mconst DEFAULT_FILTERS: SearchFilters = {[m
+[32m+[m[32m  type: "All",[m
+[32m+[m[32m  category: "All",[m
+[32m+[m[32m  aiStatus: "All",[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mconst AI_STATUS_MAP: Record<string, string[]> = {[m
+[32m+[m[32m  Ready: ["ready"],[m
+[32m+[m[32m  Processing: ["pending", "extracting", "ai_processing"],[m
+[32m+[m[32m  Failed: ["failed"],[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mfunction normalizeQuery(query: string): string {[m
+[32m+[m[32m  return query.trim().toLowerCase().replace(/\s+/g, " ");[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction escapeForIlike(text: string): string {[m
+[32m+[m[32m  return text.replace(/[%_\\]/g, "\\$&");[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction buildIlikePattern(query: string): string {[m
+[32m+[m[32m  return `%${escapeForIlike(query)}%`;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction findMatches([m
+[32m+[m[32m  text: string,[m
+[32m+[m[32m  query: string,[m
+[32m+[m[32m): { count: number; snippet: string } {[m
+[32m+[m[32m  if (!text) return { count: 0, snippet: "" };[m
+[32m+[m[32m  const lowerText = text.toLowerCase();[m
+[32m+[m[32m  const lowerQuery = query.toLowerCase();[m
+[32m+[m[32m  const count = (lowerText.match(new RegExp(escapeRegex(lowerQuery), "g")) || []).length;[m
+[32m+[m
+[32m+[m[32m  let snippet = "";[m
+[32m+[m[32m  if (count > 0) {[m
+[32m+[m[32m    const idx = lowerText.indexOf(lowerQuery);[m
+[32m+[m[32m    const start = Math.max(0, idx - 40);[m
+[32m+[m[32m    const end = Math.min(text.length, idx + lowerQuery.length + 60);[m
+[32m+[m[32m    snippet = (start > 0 ? "..." : "") + text.slice(start, end) + (end < text.length ? "..." : "");[m
+[32m+[m[32m  }[m
+[32m+[m[32m  return { count, snippet };[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction escapeRegex(s: string): string {[m
+[32m+[m[32m  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction scoreDocument([m
+[32m+[m[32m  doc: DocumentRow,[m
+[32m+[m[32m  query: string,[m
+[32m+[m[32m): { score: number; matchedFields: MatchedField[] } {[m
+[32m+[m[32m  let score = 0;[m
+[32m+[m[32m  const matchedFields: MatchedField[] = [];[m
+[32m+[m
+[32m+[m[32m  const titleMatch = findMatches(doc.title || "", query);[m
+[32m+[m[32m  if (titleMatch.count > 0) {[m
+[32m+[m[32m    score += FIELD_WEIGHTS.title * titleMatch.count;[m
+[32m+[m[32m    matchedFields.push({ field: "title", snippet: doc.title });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const summaryMatch = findMatches(doc.summary || "", query);[m
+[32m+[m[32m  if (summaryMatch.count > 0) {[m
+[32m+[m[32m    score += FIELD_WEIGHTS.summary * summaryMatch.count;[m
+[32m+[m[32m    matchedFields.push({ field: "summary", snippet: summaryMatch.snippet });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const keywordList = doc.keywords?.length ? doc.keywords : doc.tags || [];[m
+[32m+[m[32m  const keywordMatches = keywordList.filter((k) =>[m
+[32m+[m[32m    k.toLowerCase().includes(query.toLowerCase()),[m
+[32m+[m[32m  );[m
+[32m+[m[32m  if (keywordMatches.length > 0) {[m
+[32m+[m[32m    score += FIELD_WEIGHTS.keywords * keywordMatches.length;[m
+[32m+[m[32m    matchedFields.push({ field: "keywords", snippet: keywordMatches.join(", ") });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const categoryMatch = findMatches(doc.category || "", query);[m
+[32m+[m[32m  if (categoryMatch.count > 0) {[m
+[32m+[m[32m    score += FIELD_WEIGHTS.category * categoryMatch.count;[m
+[32m+[m[32m    matchedFields.push({ field: "category", snippet: doc.category });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const typeMatch = findMatches(doc.type || "", query);[m
+[32m+[m[32m  if (typeMatch.count > 0) {[m
+[32m+[m[32m    score += FIELD_WEIGHTS.type * typeMatch.count;[m
+[32m+[m[32m    matchedFields.push({ field: "type", snippet: doc.type });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const textMatch = findMatches(doc.extracted_text || "", query);[m
+[32m+[m[32m  if (textMatch.count > 0) {[m
+[32m+[m[32m    score += FIELD_WEIGHTS.extracted_text * textMatch.count;[m
+[32m+[m[32m    matchedFields.push({ field: "extracted_text", snippet: textMatch.snippet });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  return { score, matchedFields };[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mexport async function searchDocuments([m
+[32m+[m[32m  rawQuery: string,[m
+[32m+[m[32m  filters: SearchFilters = DEFAULT_FILTERS,[m
+[32m+[m[32m  allDocs?: DocumentRow[],[m
+[32m+[m[32m): Promise<SearchResult[]> {[m
+[32m+[m[32m  const query = normalizeQuery(rawQuery);[m
+[32m+[m
+[32m+[m[32m  if (allDocs && allDocs.length > 0 && !query) {[m
+[32m+[m[32m    return applyFiltersAndSort(allDocs, filters);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  let baseQuery = supabase.from("documents").select("*");[m
+[32m+[m
+[32m+[m[32m  if (query) {[m
+[32m+[m[32m    const pattern = buildIlikePattern(query);[m
+[32m+[m[32m    baseQuery = baseQuery.or([m
+[32m+[m[32m      `title.ilike.${pattern},summary.ilike.${pattern},extracted_text.ilike.${pattern},category.ilike.${pattern},type.ilike.${pattern}`,[m
+[32m+[m[32m    );[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  if (filters.type !== "All") {[m
+[32m+[m[32m    baseQuery = baseQuery.eq("type", filters.type);[m
+[32m+[m[32m  }[m
+[32m+[m[32m  if (filters.category !== "All") {[m
+[32m+[m[32m    baseQuery = baseQuery.eq("category", filters.category);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const { data, error } = await baseQuery.order("uploaded_at", { ascending: false });[m
+[32m+[m
+[32m+[m[32m  if (error) throw error;[m
+[32m+[m[32m  const docs = (data || []) as DocumentRow[];[m
+[32m+[m
+[32m+[m[32m  let filtered = docs;[m
+[32m+[m
+[32m+[m[32m  if (filters.aiStatus !== "All") {[m
+[32m+[m[32m    const statuses = AI_STATUS_MAP[filters.aiStatus] || [];[m
+[32m+[m[32m    filtered = docs.filter((d) => {[m
+[32m+[m[32m      const stage = d.ai_status || (d.status === "Ready" ? "ready" : "pending");[m
+[32m+[m[32m      return statuses.includes(stage);[m
+[32m+[m[32m    });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  if (!query) {[m
+[32m+[m[32m    return filtered.map((doc) => ({[m
+[32m+[m[32m      doc,[m
+[32m+[m[32m      score: 0,[m
+[32m+[m[32m      matchedFields: [],[m
+[32m+[m[32m    }));[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  return filtered[m
+[32m+[m[32m    .map((doc) => {[m
+[32m+[m[32m      const { score, matchedFields } = scoreDocument(doc, query);[m
+[32m+[m[32m      return { doc, score, matchedFields };[m
+[32m+[m[32m    })[m
+[32m+[m[32m    .filter((r) => r.score > 0)[m
+[32m+[m[32m    .sort((a, b) => b.score - a.score);[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction applyFiltersAndSort([m
+[32m+[m[32m  docs: DocumentRow[],[m
+[32m+[m[32m  filters: SearchFilters,[m
+[32m+[m[32m): SearchResult[] {[m
+[32m+[m[32m  let filtered = docs;[m
+[32m+[m
+[32m+[m[32m  if (filters.type !== "All") {[m
+[32m+[m[32m    filtered = filtered.filter((d) => d.type === filters.type);[m
+[32m+[m[32m  }[m
+[32m+[m[32m  if (filters.category !== "All") {[m
+[32m+[m[32m    filtered = filtered.filter((d) => d.category === filters.category);[m
+[32m+[m[32m  }[m
+[32m+[m[32m  if (filters.aiStatus !== "All") {[m
+[32m+[m[32m    const statuses = AI_STATUS_MAP[filters.aiStatus] || [];[m
+[32m+[m[32m    filtered = filtered.filter((d) => {[m
+[32m+[m[32m      const stage = d.ai_status || (d.status === "Ready" ? "ready" : "pending");[m
+[32m+[m[32m      return statuses.includes(stage);[m
+[32m+[m[32m    });[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  return filtered.map((doc) => ({ doc, score: 0, matchedFields: [] }));[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mexport function getMatchedFieldLabel(field: MatchedFieldName): string {[m
+[32m+[m[32m  switch (field) {[m
+[32m+[m[32m    case "title": return "Title";[m
+[32m+[m[32m    case "summary": return "Summary";[m
+[32m+[m[32m    case "extracted_text": return "Document Text";[m
+[32m+[m[32m    case "keywords": return "Keywords";[m
+[32m+[m[32m    case "category": return "Category";[m
+[32m+[m[32m    case "type": return "Type";[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[1mdiff --git a/src/utils/highlight.tsx b/src/utils/highlight.tsx[m
+[1mnew file mode 100644[m
+[1mindex 0000000..4898d11[m
+[1m--- /dev/null[m
+[1m+++ b/src/utils/highlight.tsx[m
+[36m@@ -0,0 +1,56 @@[m
+[32m+[m[32mimport { type ReactNode, Fragment } from "react";[m
+[32m+[m
+[32m+[m[32mexport function highlightText([m
+[32m+[m[32m  text: string,[m
+[32m+[m[32m  query: string,[m
+[32m+[m[32m  className = "bg-yellow-200 text-yellow-900 rounded px-0.5",[m
+[32m+[m[32m): ReactNode {[m
+[32m+[m[32m  if (!query.trim() || !text) return text;[m
+[32m+[m
+[32m+[m[32m  const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");[m
+[32m+[m[32m  const regex = new RegExp(`(${escaped})`, "gi");[m
+[32m+[m[32m  const parts = text.split(regex);[m
+[32m+[m
+[32m+[m[32m  return parts.map((part, i) => {[m
+[32m+[m[32m    if (part.toLowerCase() === query.trim().toLowerCase()) {[m
+[32m+[m[32m      return ([m
+[32m+[m[32m        <mark key={i} className={className}>[m
+[32m+[m[32m          {part}[m
+[32m+[m[32m        </mark>[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }[m
+[32m+[m[32m    return <Fragment key={i}>{part}</Fragment>;[m
+[32m+[m[32m  });[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mexport function highlightKeywords([m
+[32m+[m[32m  keywords: string[],[m
+[32m+[m[32m  query: string,[m
+[32m+[m[32m  matchedClassName = "bg-yellow-200 text-yellow-900 rounded px-0.5",[m
+[32m+[m[32m  normalClassName = "bg-blue-50 text-blue-700",[m
+[32m+[m[32m): ReactNode[] {[m
+[32m+[m[32m  if (!query.trim()) {[m
+[32m+[m[32m    return keywords.map((kw) => ([m
+[32m+[m[32m      <span key={kw} className={`rounded-md px-2.5 py-1 text-xs font-medium ${normalClassName}`}>[m
+[32m+[m[32m        {kw}[m
+[32m+[m[32m      </span>[m
+[32m+[m[32m    ));[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  const lowerQuery = query.trim().toLowerCase();[m
+[32m+[m
+[32m+[m[32m  return keywords.map((kw) => {[m
+[32m+[m[32m    if (kw.toLowerCase().includes(lowerQuery)) {[m
+[32m+[m[32m      return ([m
+[32m+[m[32m        <span key={kw} className={`rounded-md px-2.5 py-1 text-xs font-medium ${matchedClassName}`}>[m
+[32m+[m[32m          {kw}[m
+[32m+[m[32m        </span>[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }[m
+[32m+[m[32m    return ([m
+[32m+[m[32m      <span key={kw} className={`rounded-md px-2.5 py-1 text-xs font-medium ${normalClassName}`}>[m
+[32m+[m[32m        {kw}[m
+[32m+[m[32m      </span>[m
+[32m+[m[32m    );[m
+[32m+[m[32m  });[m
+[32m+[m[32m}[m
+[1mdiff --git a/src/views/KnowledgeBase.tsx b/src/views/KnowledgeBase.tsx[m
+[1mindex 4f64392..f15cfb7 100644[m
+[1m--- a/src/views/KnowledgeBase.tsx[m
+[1m+++ b/src/views/KnowledgeBase.tsx[m
+[36m@@ -21,15 +21,19 @@[m [mimport {[m
+   Clock,[m
+   AlertCircle,[m
+   Inbox,[m
+[32m+[m[32m  Filter,[m
+ } from "lucide-react";[m
+ import {[m
+[31m-  getDocuments,[m
+[32m+[m[32m  getDocumentsLite,[m
+   deleteDocument,[m
+   processDocument,[m
+   type DocumentRow,[m
+ } from "../services/documents";[m
+ import { supabase } from "../lib/supabase";[m
+ import { getAiStage } from "../services/documents";[m
+[32m+[m[32mimport { useDocumentSearch } from "../hooks/useDocumentSearch";[m
+[32m+[m[32mimport { highlightText, highlightKeywords } from "../utils/highlight";[m
+[32m+[m[32mimport { getMatchedFieldLabel, type MatchedFieldName } from "../services/search";[m
+ [m
+ const typeIcon = (type: string) => {[m
+   switch (type) {[m
+[36m@@ -60,18 +64,17 @@[m [mconst statusBadge = (status: string) => {[m
+ const formatDate = (dateStr: string) =>[m
+   new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });[m
+ [m
+[32m+[m[32mconst aiStatusOptions = ["All", "Ready", "Processing", "Failed"] as const;[m
+[32m+[m
+ interface KnowledgeBaseProps {[m
+   onUploadClick: () => void;[m
+   refreshKey: number;[m
+ }[m
+ [m
+ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBaseProps) {[m
+[31m-  const [docs, setDocs] = useState<DocumentRow[]>([]);[m
+[32m+[m[32m  const [allDocs, setAllDocs] = useState<DocumentRow[]>([]);[m
+   const [loading, setLoading] = useState(true);[m
+   const [error, setError] = useState<string | null>(null);[m
+[31m-  const [search, setSearch] = useState("");[m
+[31m-  const [typeFilter, setTypeFilter] = useState("All");[m
+[31m-  const [categoryFilter, setCategoryFilter] = useState("All");[m
+   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "alpha">("newest");[m
+   const [selected, setSelected] = useState<DocumentRow | null>(null);[m
+   const [deleteConfirm, setDeleteConfirm] = useState<DocumentRow | null>(null);[m
+[36m@@ -81,12 +84,14 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+   const [metaCategory, setMetaCategory] = useState("");[m
+   const [metaSaving, setMetaSaving] = useState(false);[m
+ [m
+[32m+[m[32m  const search = useDocumentSearch({ initialDocs: allDocs, debounceMs: 250 });[m
+[32m+[m
+   const loadDocs = useCallback(async () => {[m
+     setLoading(true);[m
+     setError(null);[m
+     try {[m
+[31m-      const data = await getDocuments();[m
+[31m-      setDocs(data);[m
+[32m+[m[32m      const data = await getDocumentsLite();[m
+[32m+[m[32m      setAllDocs(data);[m
+     } catch (err: any) {[m
+       console.error(err);[m
+       setError(err.message || "Failed to load documents");[m
+[36m@@ -100,14 +105,14 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+   }, [loadDocs, refreshKey]);[m
+ [m
+   // Auto-refresh while any documents are still processing[m
+[31m-  const hasProcessing = docs.some([m
+[32m+[m[32m  const hasProcessing = allDocs.some([m
+     (d) => d.status === "Processing" || (d.ai_status && d.ai_status !== "ready" && d.ai_status !== "failed"),[m
+   );[m
+   useEffect(() => {[m
+     if (!hasProcessing) return;[m
+     const interval = setInterval(async () => {[m
+[31m-      const fresh = await getDocuments();[m
+[31m-      setDocs(fresh);[m
+[32m+[m[32m      const fresh = await getDocumentsLite();[m
+[32m+[m[32m      setAllDocs(fresh);[m
+       if (selected) {[m
+         const updated = fresh.find((d) => d.id === selected.id);[m
+         if (updated) setSelected(updated);[m
+[36m@@ -119,20 +124,17 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+   const handleReprocess = async (doc: DocumentRow) => {[m
+     setReprocessingId(doc.id);[m
+     try {[m
+[31m-      // Optimistically set status to Processing[m
+[31m-      setDocs((prev) =>[m
+[31m-        prev.map((d) => (d.id === doc.id ? { ...d, status: "Processing" } : d)),[m
+[32m+[m[32m      setAllDocs((prev) =>[m
+[32m+[m[32m        prev.map((d) => (d.id === doc.id ? { ...d, status: "Processing", ai_status: "extracting" } : d)),[m
+       );[m
+       await processDocument(doc.id);[m
+[31m-      // Refresh to get the updated summary/keywords[m
+[31m-      const fresh = await getDocuments();[m
+[31m-      setDocs(fresh);[m
+[32m+[m[32m      const fresh = await getDocumentsLite();[m
+[32m+[m[32m      setAllDocs(fresh);[m
+     } catch (err: any) {[m
+       console.error(err);[m
+       setError(err.message || "Failed to reprocess document");[m
+[31m-      // Revert status on failure[m
+[31m-      setDocs((prev) =>[m
+[31m-        prev.map((d) => (d.id === doc.id ? { ...d, status: doc.status } : d)),[m
+[32m+[m[32m      setAllDocs((prev) =>[m
+[32m+[m[32m        prev.map((d) => (d.id === doc.id ? { ...d, status: doc.status, ai_status: doc.ai_status } : d)),[m
+       );[m
+     } finally {[m
+       setReprocessingId(null);[m
+[36m@@ -140,39 +142,35 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+   };[m
+ [m
+   const categories = useMemo(() => {[m
+[31m-    const set = new Set(docs.map((d) => d.category));[m
+[32m+[m[32m    const set = new Set(allDocs.map((d) => d.category));[m
+     return ["All", ...Array.from(set)];[m
+[31m-  }, [docs]);[m
+[32m+[m[32m  }, [allDocs]);[m
+ [m
+   const types = ["All", "PDF", "Word", "Presentation"];[m
+ [m
+[31m-  const filtered = useMemo(() => {[m
+[31m-    let result = docs.filter((d) => {[m
+[31m-      const matchSearch =[m
+[31m-        d.title.toLowerCase().includes(search.toLowerCase()) ||[m
+[31m-        (d.tags || []).some((k) => k.toLowerCase().includes(search.toLowerCase()));[m
+[31m-      const matchType = typeFilter === "All" || d.type === typeFilter;[m
+[31m-      const matchCat = categoryFilter === "All" || d.category === categoryFilter;[m
+[31m-      return matchSearch && matchType && matchCat;[m
+[31m-    });[m
+[31m-[m
+[31m-    result = [...result].sort((a, b) => {[m
+[32m+[m[32m  // Apply sort to search results[m
+[32m+[m[32m  const displayResults = useMemo(() => {[m
+[32m+[m[32m    const results = [...search.results];[m
+[32m+[m[32m    if (search.isSearchActive) {[m
+[32m+[m[32m      // When searching, keep relevance ranking (score-based)[m
+[32m+[m[32m      return results;[m
+[32m+[m[32m    }[m
+[32m+[m[32m    // When not searching, apply user's sort preference[m
+[32m+[m[32m    return results.sort((a, b) => {[m
+       if (sortBy === "newest")[m
+[31m-        return new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime();[m
+[32m+[m[32m        return new Date(b.doc.uploaded_at).getTime() - new Date(a.doc.uploaded_at).getTime();[m
+       if (sortBy === "oldest")[m
+[31m-        return new Date(a.uploaded_at).getTime() - new Date(b.uploaded_at).getTime();[m
+[31m-      return a.title.localeCompare(b.title);[m
+[32m+[m[32m        return new Date(a.doc.uploaded_at).getTime() - new Date(b.doc.uploaded_at).getTime();[m
+[32m+[m[32m      return a.doc.title.localeCompare(b.doc.title);[m
+     });[m
+[31m-[m
+[31m-    return result;[m
+[31m-  }, [docs, search, typeFilter, categoryFilter, sortBy]);[m
+[32m+[m[32m  }, [search.results, search.isSearchActive, sortBy]);[m
+ [m
+   const stats = {[m
+[31m-    total: docs.length,[m
+[31m-    pdfs: docs.filter((d) => d.type === "PDF").length,[m
+[31m-    word: docs.filter((d) => d.type === "Word").length,[m
+[31m-    presentations: docs.filter((d) => d.type === "Presentation").length,[m
+[31m-    indexed: docs.filter((d) => d.status === "Indexed").length,[m
+[32m+[m[32m    total: allDocs.length,[m
+[32m+[m[32m    pdfs: allDocs.filter((d) => d.type === "PDF").length,[m
+[32m+[m[32m    word: allDocs.filter((d) => d.type === "Word").length,[m
+[32m+[m[32m    presentations: allDocs.filter((d) => d.type === "Presentation").length,[m
+[32m+[m[32m    indexed: allDocs.filter((d) => d.status === "Indexed" || d.ai_status === "ready").length,[m
+   };[m
+ [m
+   const statCards = [[m
+[36m@@ -192,8 +190,8 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+         .update({ title: metaTitle, category: metaCategory })[m
+         .eq("id", editingMeta.id);[m
+       if (error) throw error;[m
+[31m-      const fresh = await getDocuments();[m
+[31m-      setDocs(fresh);[m
+[32m+[m[32m      const fresh = await getDocumentsLite();[m
+[32m+[m[32m      setAllDocs(fresh);[m
+       if (selected?.id === editingMeta.id) {[m
+         setSelected({ ...selected, title: metaTitle, category: metaCategory });[m
+       }[m
+[36m@@ -214,7 +212,7 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+   const handleDelete = async (doc: DocumentRow) => {[m
+     try {[m
+       await deleteDocument(doc.id);[m
+[31m-      setDocs((prev) => prev.filter((d) => d.id !== doc.id));[m
+[32m+[m[32m      setAllDocs((prev) => prev.filter((d) => d.id !== doc.id));[m
+       if (selected?.id === doc.id) setSelected(null);[m
+     } catch (err: any) {[m
+       console.error(err);[m
+[36m@@ -223,6 +221,15 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+     setDeleteConfirm(null);[m
+   };[m
+ [m
+[32m+[m[32m  // Build a lookup map for match info by doc id[m
+[32m+[m[32m  const matchMap = useMemo(() => {[m
+[32m+[m[32m    const map = new Map<string, { matchedFields: { field: MatchedFieldName; snippet: string }[]; score: number }>();[m
+[32m+[m[32m    for (const r of search.results) {[m
+[32m+[m[32m      map.set(r.doc.id, { matchedFields: r.matchedFields, score: r.score });[m
+[32m+[m[32m    }[m
+[32m+[m[32m    return map;[m
+[32m+[m[32m  }, [search.results]);[m
+[32m+[m
+   return ([m
+     <div className="space-y-6">[m
+       {/* Header */}[m
+[36m@@ -269,25 +276,41 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+           {/* Search & Filters */}[m
+           <div className="rounded-2xl border border-slate-200 bg-white p-4">[m
+             <div className="flex flex-col gap-3">[m
+[32m+[m[32m              {/* Search bar with clear button */}[m
+               <div className="relative">[m
+                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />[m
+                 <input[m
+                   type="text"[m
+[31m-                  value={search}[m
+[31m-                  onChange={(e) => setSearch(e.target.value)}[m
+[31m-                  placeholder="Search documents by name or keyword..."[m
+[31m-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"[m
+[32m+[m[32m                  value={search.query}[m
+[32m+[m[32m                  onChange={(e) => search.setQuery(e.target.value)}[m
+[32m+[m[32m                  placeholder="Search across titles, summaries, keywords, and full document text..."[m
+[32m+[m[32m                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-10 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"[m
+                 />[m
+[32m+[m[32m                {search.loading && ([m
+[32m+[m[32m                  <Loader2 className="absolute right-9 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-blue-400" />[m
+[32m+[m[32m                )}[m
+[32m+[m[32m                {search.query && !search.loading && ([m
+[32m+[m[32m                  <button[m
+[32m+[m[32m                    onClick={search.clearSearch}[m
+[32m+[m[32m                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"[m
+[32m+[m[32m                    title="Clear search"[m
+[32m+[m[32m                  >[m
+[32m+[m[32m                    <X className="h-4 w-4" />[m
+[32m+[m[32m                  </button>[m
+[32m+[m[32m                )}[m
+               </div>[m
+[31m-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">[m
+[32m+[m
+[32m+[m[32m              {/* Filters row */}[m
+[32m+[m[32m              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">[m
+[32m+[m[32m                {/* Type filter */}[m
+                 <div className="flex items-center gap-1.5 overflow-x-auto">[m
+                   <span className="shrink-0 text-xs font-medium text-slate-400">Type:</span>[m
+                   {types.map((t) => ([m
+                     <button[m
+                       key={t}[m
+[31m-                      onClick={() => setTypeFilter(t)}[m
+[32m+[m[32m                      onClick={() => search.setFilters({ type: t })}[m
+                       className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${[m
+[31m-                        typeFilter === t[m
+[32m+[m[32m                        search.filters.type === t[m
+                           ? "bg-blue-600 text-white"[m
+                           : "bg-slate-100 text-slate-600 hover:bg-slate-200"[m
+                       }`}[m
+[36m@@ -296,9 +319,11 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                     </button>[m
+                   ))}[m
+                 </div>[m
+[32m+[m
+[32m+[m[32m                {/* Category filter */}[m
+                 <select[m
+[31m-                  value={categoryFilter}[m
+[31m-                  onChange={(e) => setCategoryFilter(e.target.value)}[m
+[32m+[m[32m                  value={search.filters.category}[m
+[32m+[m[32m                  onChange={(e) => search.setFilters({ category: e.target.value })}[m
+                   className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"[m
+                 >[m
+                   {categories.map((c) => ([m
+[36m@@ -307,24 +332,52 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                     </option>[m
+                   ))}[m
+                 </select>[m
+[32m+[m
+[32m+[m[32m                {/* AI Status filter */}[m
+                 <select[m
+[31m-                  value={sortBy}[m
+[31m-                  onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "alpha")}[m
+[31m-                  className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"[m
+[32m+[m[32m                  value={search.filters.aiStatus}[m
+[32m+[m[32m                  onChange={(e) => search.setFilters({ aiStatus: e.target.value })}[m
+[32m+[m[32m                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"[m
+                 >[m
+[31m-                  <option value="newest">Newest First</option>[m
+[31m-                  <option value="oldest">Oldest First</option>[m
+[31m-                  <option value="alpha">Alphabetical</option>[m
+[32m+[m[32m                  {aiStatusOptions.map((s) => ([m
+[32m+[m[32m                    <option key={s} value={s}>[m
+[32m+[m[32m                      {s === "All" ? "All AI Status" : `AI: ${s}`}[m
+[32m+[m[32m                    </option>[m
+[32m+[m[32m                  ))}[m
+                 </select>[m
+[32m+[m
+[32m+[m[32m                {/* Sort - only when not actively searching */}[m
+[32m+[m[32m                {!search.isSearchActive && ([m
+[32m+[m[32m                  <select[m
+[32m+[m[32m                    value={sortBy}[m
+[32m+[m[32m                    onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "alpha")}[m
+[32m+[m[32m                    className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"[m
+[32m+[m[32m                  >[m
+[32m+[m[32m                    <option value="newest">Newest First</option>[m
+[32m+[m[32m                    <option value="oldest">Oldest First</option>[m
+[32m+[m[32m                    <option value="alpha">Alphabetical</option>[m
+[32m+[m[32m                  </select>[m
+[32m+[m[32m                )}[m
+               </div>[m
+[32m+[m
+[32m+[m[32m              {/* Active filter indicator */}[m
+[32m+[m[32m              {(search.filters.type !== "All" || search.filters.category !== "All" || search.filters.aiStatus !== "All") && ([m
+[32m+[m[32m                <div className="flex items-center gap-1.5 text-xs text-slate-400">[m
+[32m+[m[32m                  <Filter className="h-3 w-3" />[m
+[32m+[m[32m                  <span>[m
+[32m+[m[32m                    Filters active[m
+[32m+[m[32m                    {search.isSearchActive && search.results.length > 0 && ` · ${search.results.length} result${search.results.length === 1 ? "" : "s"}`}[m
+[32m+[m[32m                  </span>[m
+[32m+[m[32m                </div>[m
+[32m+[m[32m              )}[m
+             </div>[m
+           </div>[m
+ [m
+           {/* Error banner */}[m
+[31m-          {error && ([m
+[32m+[m[32m          {(error || search.error) && ([m
+             <div className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">[m
+               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />[m
+[31m-              <span>{error}</span>[m
+[32m+[m[32m              <span>{search.error || error}</span>[m
+             </div>[m
+           )}[m
+ [m
+[36m@@ -349,31 +402,53 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                     </tr>[m
+                   </thead>[m
+                   <tbody className="divide-y divide-slate-50">[m
+[31m-                    {filtered.length === 0 ? ([m
+[32m+[m[32m                    {displayResults.length === 0 ? ([m
+                       <tr>[m
+                         <td colSpan={7} className="px-4 py-16">[m
+                           <div className="flex flex-col items-center justify-center text-center">[m
+                             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">[m
+[31m-                              <Inbox className="h-7 w-7 text-slate-300" />[m
+[32m+[m[32m                              {search.isSearchActive ? ([m
+[32m+[m[32m                                <Search className="h-7 w-7 text-slate-300" />[m
+[32m+[m[32m                              ) : ([m
+[32m+[m[32m                                <Inbox className="h-7 w-7 text-slate-300" />[m
+[32m+[m[32m                              )}[m
+                             </div>[m
+                             <p className="mt-4 text-sm font-medium text-slate-500">[m
+[31m-                              {docs.length === 0 ? "No documents yet" : "No documents match your filters"}[m
+[32m+[m[32m                              {allDocs.length === 0[m
+[32m+[m[32m                                ? "No documents yet"[m
+[32m+[m[32m                                : search.isSearchActive[m
+[32m+[m[32m                                ? `No results for "${search.query}"`[m
+[32m+[m[32m                                : "No documents match your filters"}[m
+                             </p>[m
+                             <p className="mt-1 text-xs text-slate-400">[m
+[31m-                              {docs.length === 0[m
+[32m+[m[32m                              {allDocs.length === 0[m
+                                 ? "Upload your first document to get started"[m
+[31m-                                : "Try adjusting your search or filters"}[m
+[32m+[m[32m                                : search.isSearchActive[m
+[32m+[m[32m                                ? "Try different keywords or clear your search"[m
+[32m+[m[32m                                : "Try adjusting your filters"}[m
+                             </p>[m
+[32m+[m[32m                            {search.isSearchActive && ([m
+[32m+[m[32m                              <button[m
+[32m+[m[32m                                onClick={search.clearSearch}[m
+[32m+[m[32m                                className="mt-3 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-200"[m
+[32m+[m[32m                              >[m
+[32m+[m[32m                                Clear search[m
+[32m+[m[32m                              </button>[m
+[32m+[m[32m                            )}[m
+                           </div>[m
+                         </td>[m
+                       </tr>[m
+                     ) : ([m
+[31m-                      filtered.map((doc) => {[m
+[32m+[m[32m                      displayResults.map((result) => {[m
+[32m+[m[32m                        const doc = result.doc;[m
+                         const ti = typeIcon(doc.type);[m
+                         const TypeIcon = ti.icon;[m
+                         const sb = statusBadge(doc.status);[m
+                         const StatusIcon = sb.icon;[m
+                         const isSelected = selected?.id === doc.id;[m
+[32m+[m[32m                        const matchInfo = matchMap.get(doc.id);[m
+[32m+[m[32m                        const query = search.query;[m
+[32m+[m
+                         return ([m
+                           <tr[m
+                             key={doc.id}[m
+[36m@@ -387,7 +462,21 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${ti.color}`}>[m
+                                   <TypeIcon className="h-4 w-4" />[m
+                                 </div>[m
+[31m-                                <span className="text-sm font-medium text-slate-800 line-clamp-1">{doc.title}</span>[m
+[32m+[m[32m                                <div className="min-w-0">[m
+[32m+[m[32m                                  <div className="text-sm font-medium text-slate-800 line-clamp-1">[m
+[32m+[m[32m                                    {highlightText(doc.title, query)}[m
+[32m+[m[32m                                  </div>[m
+[32m+[m[32m                                  {/* Match reasons */}[m
+[32m+[m[32m                                  {matchInfo && matchInfo.matchedFields.length > 0 && ([m
+[32m+[m[32m                                    <div className="mt-0.5 flex flex-wrap items-center gap-1">[m
+[32m+[m[32m                                      {matchInfo.matchedFields.slice(0, 3).map((mf, i) => ([m
+[32m+[m[32m                                        <span key={i} className="inline-flex items-center gap-0.5 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">[m
+[32m+[m[32m                                          {getMatchedFieldLabel(mf.field)}[m
+[32m+[m[32m                                        </span>[m
+[32m+[m[32m                                      ))}[m
+[32m+[m[32m                                    </div>[m
+[32m+[m[32m                                  )}[m
+[32m+[m[32m                                </div>[m
+                               </div>[m
+                             </td>[m
+                             <td className="hidden px-4 py-3 sm:table-cell">[m
+[36m@@ -465,7 +554,9 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                     })()}[m
+                   </div>[m
+                   <div className="min-w-0 flex-1">[m
+[31m-                    <h3 className="text-sm font-bold text-slate-900 leading-snug">{selected.title}</h3>[m
+[32m+[m[32m                    <h3 className="text-sm font-bold text-slate-900 leading-snug">[m
+[32m+[m[32m                      {highlightText(selected.title, search.query)}[m
+[32m+[m[32m                    </h3>[m
+                     <p className="mt-0.5 text-xs text-slate-400">{selected.type} · {selected.file_size}</p>[m
+                   </div>[m
+                   <button[m
+[36m@@ -517,7 +608,11 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                   {(() => {[m
+                     const stage = getAiStage(selected);[m
+                     if (stage === "ready" && selected.summary) {[m
+[31m-                      return <p className="text-sm leading-relaxed text-slate-600">{selected.summary}</p>;[m
+[32m+[m[32m                      return ([m
+[32m+[m[32m                        <p className="text-sm leading-relaxed text-slate-600">[m
+[32m+[m[32m                          {highlightText(selected.summary, search.query)}[m
+[32m+[m[32m                        </p>[m
+[32m+[m[32m                      );[m
+                     }[m
+                     if (stage === "extracting" || stage === "ai_processing" || stage === "pending") {[m
+                       return ([m
+[36m@@ -542,11 +637,7 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+                     {(() => {[m
+                       const kws = (selected.keywords && selected.keywords.length > 0) ? selected.keywords : (selected.tags || []);[m
+                       if (kws.length > 0) {[m
+[31m-                        return kws.map((kw) => ([m
+[31m-                          <span key={kw} className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">[m
+[31m-                            {kw}[m
+[31m-                          </span>[m
+[31m-                        ));[m
+[32m+[m[32m                        return highlightKeywords(kws, search.query);[m
+                       }[m
+                       const stage = getAiStage(selected);[m
+                       if (stage === "extracting" || stage === "ai_processing" || stage === "pending") {[m
+[36m@@ -606,7 +697,7 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+               </div>[m
+             )}[m
+ [m
+[31m-            {/* Future AI Section */}[m
+[32m+[m[32m            {/* AI Knowledge Search info card */}[m
+             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/50 p-5">[m
+               <div className="flex items-center gap-3">[m
+                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-200 text-slate-400">[m
+[36m@@ -656,7 +747,7 @@[m [mexport default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa[m
+               </button>[m
+               <button[m
+                 onClick={() => handleDelete(deleteConfirm)}[m
+[31m-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"[m
+[32m+[m[32m                className="rounded-lg bg-red-600 px-4 py-2 sm font-semibold text-white transition hover:bg-red-700"[m
+               >[m
+                 Delete[m
+               </button>[m
+[1mdiff --git a/supabase/migrations/20260803091838_add_search_indexes.sql b/supabase/migrations/20260803091838_add_search_indexes.sql[m
+[1mnew file mode 100644[m
+[1mindex 0000000..cf348bb[m
+[1m--- /dev/null[m
+[1m+++ b/supabase/migrations/20260803091838_add_search_indexes.sql[m
+[36m@@ -0,0 +1,44 @@[m
+[32m+[m[32m/*[m
+[32m+[m[32m# Add search indexes to documents table[m
+[32m+[m
+[32m+[m[32m## Overview[m
+[32m+[m[32mAdds a GIN index on the `extracted_text` column using the `pg_trgm`[m
+[32m+[m[32mextension to accelerate case-insensitive partial-word searches (ILIKE[m
+[32m+[m[32mwith wildcards). Also adds a B-tree index on `category` and `type` to[m
+[32m+[m[32mspeed up filter queries. These indexes do not change any existing RLS[m
+[32m+[m[32mpolicies — they are purely performance improvements.[m
+[32m+[m
+[32m+[m[32m## Changes[m
+[32m+[m
+[32m+[m[32m### Extensions[m
+[32m+[m[32m- Enables `pg_trgm` (trigram matching) for fast fuzzy text search[m
+[32m+[m
+[32m+[m[32m### Indexes (all IF NOT EXISTS — safe to re-run)[m
+[32m+[m[32m- `idx_documents_extracted_text_trgm` — GIN trigram index on[m
+[32m+[m[32m  `extracted_text` for fast ILIKE '%query%' searches[m
+[32m+[m[32m- `idx_documents_summary_trgm` — GIN trigram index on `summary`[m
+[32m+[m[32m- `idx_documents_title_trgm` — GIN trigram index on `title`[m
+[32m+[m[32m- `idx_documents_category` — B-tree index on `category` for filter queries[m
+[32m+[m[32m- `idx_documents_type` — B-tree index on `type` for filter queries[m
+[32m+[m
+[32m+[m[32m## Security[m
+[32m+[m[32m- No changes to RLS policies. Existing anon+authenticated CRUD policies[m
+[32m+[m[32m  remain unchanged. Indexes are transparent to access control.[m
+[32m+[m[32m*/[m
+[32m+[m
+[32m+[m[32mCREATE EXTENSION IF NOT EXISTS pg_trgm;[m
+[32m+[m
+[32m+[m[32mCREATE INDEX IF NOT EXISTS idx_documents_extracted_text_trgm[m
+[32m+[m[32m  ON documents USING gin (extracted_text gin_trgm_ops);[m
+[32m+[m
+[32m+[m[32mCREATE INDEX IF NOT EXISTS idx_documents_summary_trgm[m
+[32m+[m[32m  ON documents USING gin (summary gin_trgm_ops);[m
+[32m+[m
+[32m+[m[32mCREATE INDEX IF NOT EXISTS idx_documents_title_trgm[m
+[32m+[m[32m  ON documents USING gin (title gin_trgm_ops);[m
+[32m+[m
+[32m+[m[32mCREATE INDEX IF NOT EXISTS idx_documents_category[m
+[32m+[m[32m  ON documents (category);[m
+[32m+[m
+[32m+[m[32mCREATE INDEX IF NOT EXISTS idx_documents_type[m
+[32m+[m[32m  ON documents (type);[m
