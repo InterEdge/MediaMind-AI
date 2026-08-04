@@ -69,9 +69,11 @@ const aiStatusOptions = ["All", "Ready", "Processing", "Failed"] as const;
 interface KnowledgeBaseProps {
   onUploadClick: () => void;
   refreshKey: number;
+  initialDocumentId?: string | null;
+  onDocumentOpened?: () => void;
 }
 
-export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBaseProps) {
+export default function KnowledgeBase({ onUploadClick, refreshKey, initialDocumentId, onDocumentOpened }: KnowledgeBaseProps) {
   const [allDocs, setAllDocs] = useState<DocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +105,17 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
   useEffect(() => {
     loadDocs();
   }, [loadDocs, refreshKey]);
+
+  // Open a specific document when navigated from AI Assistant
+  useEffect(() => {
+    if (initialDocumentId && allDocs.length > 0) {
+      const doc = allDocs.find((d) => d.id === initialDocumentId);
+      if (doc) {
+        setSelected(doc);
+        onDocumentOpened?.();
+      }
+    }
+  }, [initialDocumentId, allDocs, onDocumentOpened]);
 
   // Auto-refresh while any documents are still processing
   const hasProcessing = allDocs.some(
@@ -700,21 +713,17 @@ export default function KnowledgeBase({ onUploadClick, refreshKey }: KnowledgeBa
             {/* AI Knowledge Search info card */}
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/50 p-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-200 text-slate-400">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
                   <Brain className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-500">AI Knowledge Search</h3>
-                  <p className="text-xs text-slate-400">Coming Soon</p>
+                  <h3 className="text-sm font-semibold text-slate-700">AI Knowledge Assistant</h3>
+                  <p className="text-xs text-blue-500">Now Available</p>
                 </div>
               </div>
-              <p className="mt-3 text-xs leading-relaxed text-slate-400">
+              <p className="mt-3 text-xs leading-relaxed text-slate-500">
                 Ask questions across all your indexed documents. AI will search, synthesize, and cite sources from your knowledge library.
               </p>
-              <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-200 px-3 py-1.5 text-xs font-medium text-slate-400">
-                <Sparkles className="h-3 w-3" />
-                Disabled — Coming Soon
-              </div>
             </div>
           </div>
         </div>

@@ -9,6 +9,7 @@ import {
   Settings as SettingsIcon,
   Brain,
   X,
+  MessageSquareText,
 } from "lucide-react";
 import type { ViewId } from "../App";
 
@@ -22,6 +23,7 @@ interface SidebarProps {
 const navItems: { id: ViewId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "knowledge", label: "Knowledge Base", icon: BookOpen },
+  { id: "assistant", label: "AI Assistant", icon: MessageSquareText },
   { id: "generator", label: "Content Generator", icon: PenSquare },
   { id: "drafts", label: "Drafts", icon: FileText },
   { id: "calendar", label: "Calendar", icon: CalendarDays },

@@ -1,0 +1,167 @@
+import { supabase } from "../lib/supabase";
+
+export interface ChatSource {
+  id: string;
+  title: string;
+  category: string;
+  type: string;
+  excerpt: string;
+  citation_number: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: ChatSource[] | null;
+  created_at: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeChatResult {
+  answer: string;
+  sources: ChatSource[];
+  retrieved_document_ids: string[];
+  follow_ups: string[];
+}
+
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+const MAX_HISTORY = 10;
+
+export async function askKnowledgeBase(
+  question: string,
+  history: HistoryMessage[],
+): Promise<KnowledgeChatResult> {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/knowledge-chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify({
+      question,
+      history: history.slice(-MAX_HISTORY),
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to get an answer. Please try again.");
+  }
+
+  return {
+    answer: data.answer || "",
+    sources: Array.isArray(data.sources) ? data.sources : [],
+    retrieved_document_ids: Array.isArray(data.retrieved_document_ids) ? data.retrieved_document_ids : [],
+    follow_ups: Array.isArray(data.follow_ups) ? data.follow_ups : [],
+  };
+}
+
+export async function createChatSession(title: string): Promise<ChatSession> {
+  const { data, error } = await supabase
+    .from("chat_sessions")
+    .insert({ title })
+    .select("*")
+    .single();
+
+  if (error) throw new Error(`Failed to create chat session: ${error.message}`);
+  return data as ChatSession;
+}
+
+export async function getChatSessions(): Promise<ChatSession[]> {
+  const { data, error } = await supabase
+    .from("chat_sessions")
+    .select("*")
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(`Failed to load chat sessions: ${error.message}`);
+  return (data || []) as ChatSession[];
+}
+
+export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select("*")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true });
+
+  if (error) throw new Error(`Failed to load messages: ${error.message}`);
+  return (data || []) as ChatMessage[];
+}
+
+export async function saveChatMessage(
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  sources: ChatSource[] | null,
+): Promise<ChatMessage> {
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .insert({
+      session_id: sessionId,
+      role,
+      content,
+      sources: sources ? JSON.stringify(sources) : null,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw new Error(`Failed to save message: ${error.message}`);
+  return data as ChatMessage;
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  const { error } = await supabase
+    .from("chat_sessions")
+    .delete()
+    .eq("id", sessionId);
+
+  if (error) throw new Error(`Failed to delete session: ${error.message}`);
+}
+
+export async function updateChatSessionTitle(sessionId: string, title: string): Promise<void> {
+  const { error } = await supabase
+    .from("chat_sessions")
+    .update({ title, updated_at: new Date().toISOString() })
+    .eq("id", sessionId);
+
+  if (error) throw new Error(`Failed to update session title: ${error.message}`);
+}
+
+export function generateSessionTitle(question: string): string {
+  const trimmed = question.trim();
+  if (trimmed.length <= 50) return trimmed;
+  return trimmed.slice(0, 47) + "...";
+}
+
+export async function logChatActivity(
+  type: "knowledge_question" | "ai_answer" | "draft_from_answer",
+  description: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await supabase.from("activities").insert({
+      type,
+      description,
+      metadata,
+    });
+  } catch (err) {
+    console.error("Failed to log activity:", err);
+  }
+}

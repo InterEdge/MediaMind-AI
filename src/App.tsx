@@ -7,13 +7,14 @@ import Drafts from "./views/Drafts";
 import Calendar from "./views/Calendar";
 import Analytics from "./views/Analytics";
 import Settings from "./views/Settings";
+import KnowledgeAssistant from "./views/KnowledgeAssistant";
 import UploadDocument from "./components/UploadDocument";
 import Sidebar from "./components/Sidebar";
 import TopNav from "./components/TopNav";
 import { supabase, type Notification, type Prompt, type Draft, type Post, type Activity } from "./lib/supabase";
 import { getDocuments, type DocumentRow } from "./services/documents";
 
-export type ViewId = "dashboard" | "knowledge" | "generator" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
+export type ViewId = "dashboard" | "knowledge" | "generator" | "assistant" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
 
 export interface DataState {
   documents: DocumentRow[];
@@ -39,6 +40,7 @@ function App() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pendingDocumentId, setPendingDocumentId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -127,7 +129,17 @@ function App() {
             />
           )}
           {currentView === "knowledge" && (
-            <KnowledgeBase onUploadClick={handleUploadDocument} refreshKey={refreshKey} />
+            <KnowledgeBase onUploadClick={handleUploadDocument} refreshKey={refreshKey} initialDocumentId={pendingDocumentId} onDocumentOpened={() => setPendingDocumentId(null)} />
+          )}
+          {currentView === "assistant" && (
+            <KnowledgeAssistant
+              onNavigateToDocument={(docId) => {
+                setPendingDocumentId(docId);
+                setCurrentView("knowledge");
+                setSidebarOpen(false);
+              }}
+              onDraftCreated={() => setRefreshKey((k) => k + 1)}
+            />
           )}
           {currentView === "generator" && (
             <ContentGenerator
