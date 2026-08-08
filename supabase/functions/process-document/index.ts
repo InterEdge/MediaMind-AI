@@ -128,13 +128,121 @@ async function extractDocx(blob: Blob): Promise<string> {
   // Simpler: just join with spaces and clean up
   return textParts.join(" ").replace(/\s+/g, " ").trim();
 }
+async function extractPptx(blob: Blob): Promise<string> {
+  const buffer = new Uint8Array(await blob.arrayBuffer());
 
+  const entries: { name: string; data: Uint8Array }[] = [];
+
+  for (let i = 0; i < buffer.length - 4; i++) {
+    if (
+      buffer[i] === 0x50 &&
+      buffer[i + 1] === 0x4b &&
+      buffer[i + 2] === 0x03 &&
+      buffer[i + 3] === 0x04
+    ) {
+      const nameLen = buffer[i + 26] | (buffer[i + 27] << 8);
+      const extraLen = buffer[i + 28] | (buffer[i + 29] << 8);
+      const compressedSize =
+        buffer[i + 18] |
+        (buffer[i + 19] << 8) |
+        (buffer[i + 20] << 16) |
+        (buffer[i + 21] << 24);
+
+      const compressionMethod = buffer[i + 8] | (buffer[i + 9] << 8);
+      const nameStart = i + 30;
+
+      const name = new TextDecoder().decode(
+        buffer.slice(nameStart, nameStart + nameLen),
+      );
+
+      const dataStart = nameStart + nameLen + extraLen;
+
+      if (compressionMethod === 0 && compressedSize > 0) {
+        entries.push({
+          name,
+          data: buffer.slice(dataStart, dataStart + compressedSize),
+        });
+      } else if (compressionMethod === 8 && compressedSize > 0) {
+        try {
+          const compressedBlob = new Blob([
+            buffer.slice(dataStart, dataStart + compressedSize),
+          ]);
+
+          const decompressed = compressedBlob
+            .stream()
+            .pipeThrough(new DecompressionStream("deflate-raw"))
+            .getReader();
+
+          let inflated = new Uint8Array(0);
+
+          while (true) {
+            const { done, value } = await decompressed.read();
+            if (done) break;
+
+            const merged = new Uint8Array(
+              inflated.length + value.length,
+            );
+
+            merged.set(inflated);
+            merged.set(value, inflated.length);
+            inflated = merged;
+          }
+
+          entries.push({ name, data: inflated });
+        } catch {
+          // Skip unreadable ZIP entries
+        }
+      }
+    }
+  }
+
+  const slides = entries
+    .filter((entry) =>
+      /^ppt\/slides\/slide\d+\.xml$/i.test(entry.name)
+    )
+    .sort((a, b) => {
+      const aNum = Number(a.name.match(/slide(\d+)\.xml/i)?.[1] || 0);
+      const bNum = Number(b.name.match(/slide(\d+)\.xml/i)?.[1] || 0);
+      return aNum - bNum;
+    });
+
+  const slideTexts: string[] = [];
+
+  for (const slide of slides) {
+    const xml = new TextDecoder().decode(slide.data);
+
+    const textParts: string[] = [];
+    const textRegex = /<a:t>([\s\S]*?)<\/a:t>/g;
+
+    let match: RegExpExecArray | null;
+
+    while ((match = textRegex.exec(xml)) !== null) {
+      const text = match[1]
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .trim();
+
+      if (text) textParts.push(text);
+    }
+
+    if (textParts.length > 0) {
+      slideTexts.push(textParts.join(" "));
+    }
+  }
+
+  return slideTexts.join("\n\n").trim();
+}
 async function extractText(blob: Blob, fileType: string): Promise<string> {
   try {
     const ext = fileType.toLowerCase();
     if (ext === "pdf") return await extractPdf(blob);
     if (ext === "docx" || ext === "doc") return await extractDocx(blob);
+    if (ext === "pptx" || ext === "ppt") return await extractPptx(blob);
     if (ext === "txt" || ext === "csv") return await extractTxt(blob);
+    
     // Fallback: try as text
     return await extractTxt(blob);
   } catch (err) {
