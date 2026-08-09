@@ -138,11 +138,21 @@ export async function searchDocuments(
 ): Promise<SearchResult[]> {
   const query = normalizeQuery(rawQuery);
 
+  // When there is no search term, use the already-fetched allDocs cache so we
+  // avoid an extra round-trip.  getDocumentsLite() intentionally omits
+  // extracted_text to keep the list payload small — that's fine here because
+  // filter-only results don't need body-text scoring.
   if (allDocs && allDocs.length > 0 && !query) {
     return applyFiltersAndSort(allDocs, filters);
   }
 
-  let baseQuery = supabase.from("documents").select("*");
+  // When a query is active we always go to the database and fetch
+  // extracted_text explicitly so scoreDocument() can match against document
+  // body text.  Do NOT replace this select list with a cached allDocs that
+  // omits extracted_text — that would silently break full-text scoring.
+  let baseQuery = supabase.from("documents").select(
+    "id, title, type, category, file_size, status, summary, tags, uploaded_at, file_path, keywords, ai_status, extracted_text",
+  );
 
   if (query) {
     const pattern = buildIlikePattern(query);

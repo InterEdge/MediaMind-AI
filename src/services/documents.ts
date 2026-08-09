@@ -75,6 +75,10 @@ export async function getDocuments(): Promise<DocumentRow[]> {
   return (data || []) as DocumentRow[];
 }
 
+// Lightweight list query — omits extracted_text intentionally to keep the
+// payload small (extracted_text can be up to 50 KB per row).
+// searchDocuments() issues its own SELECT when a text query is active,
+// explicitly including extracted_text for full-text body scoring.
 export async function getDocumentsLite(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from("documents")
@@ -125,6 +129,28 @@ export async function processDocument(documentId: string): Promise<void> {
   if (!response.ok) {
     const errBody = await response.text();
     throw new Error(`Processing failed (${response.status}): ${errBody}`);
+  }
+}
+
+export async function markDocumentFailed(id: string): Promise<void> {
+  // Best-effort: update ai_status to failed so the upload poller surfaces the
+  // error rather than waiting for the safety timeout.
+  // The Supabase JS client v2 never throws on query errors — it returns
+  // { error } instead.  We check that value explicitly so a failed DB write
+  // is visible in the console rather than silently discarded.
+  try {
+    const { error } = await supabase
+      .from("documents")
+      .update({ ai_status: "failed", status: "Ready" })
+      .eq("id", id);
+    if (error) {
+      // Non-fatal: log for debugging. The upload poller's hard timeout will
+      // still surface an error in the UI if this write fails.
+      console.error("markDocumentFailed: failed to update document row:", error.message);
+    }
+  } catch (err) {
+    // Catches genuine JS/network exceptions (e.g. fetch failure).
+    console.error("markDocumentFailed: unexpected error:", err);
   }
 }
 
