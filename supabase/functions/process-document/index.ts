@@ -113,19 +113,13 @@ async function extractDocx(blob: Blob): Promise<string> {
   if (!docXmlEntry) return "";
 
   const xmlText = new TextDecoder().decode(docXmlEntry.data);
-  // Extract text from <w:t> tags (Word text runs)
+  // Extract text from <w:t> tags (Word text runs) and join with spaces.
   const textParts: string[] = [];
   const tRegex = /<w:t[^>]*>([^<]*)<\/w:t>/g;
   let m: RegExpExecArray | null;
   while ((m = tRegex.exec(xmlText)) !== null) {
     textParts.push(m[1]);
   }
-  // Insert paragraph breaks
-  const paraRegex = /<\/w:p>/g;
-  let lastIndex = 0;
-  const result: string[] = [];
-  const fullText = textParts.join("");
-  // Simpler: just join with spaces and clean up
   return textParts.join(" ").replace(/\s+/g, " ").trim();
 }
 async function extractPptx(blob: Blob): Promise<string> {

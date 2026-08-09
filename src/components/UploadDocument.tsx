@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 import { Upload, X, FileText, Loader2, AlertCircle, CheckCircle2, FileSearch, Sparkles } from "lucide-react";
-import { uploadDocument, processDocument, getDocumentById, getAiStage } from "../services/documents";
+import { uploadDocument, processDocument, markDocumentFailed, getDocumentById, getAiStage } from "../services/documents";
 
 interface UploadDocumentProps {
   onClose: () => void;
@@ -44,7 +44,7 @@ export default function UploadDocument({ onClose, onUploaded }: UploadDocumentPr
           setTimeout(() => onClose(), 1500);
         } else if (aiStage === "failed") {
           setStage("error");
-          setError("AI processing failed. The document was uploaded but could not be analyzed.");
+          setError("AI processing failed. The document was uploaded but could not be analyzed. You can retry using the Reprocess button in the Knowledge Hub.");
         } else if (aiStage === "ai_processing" && stage === "extracting") {
           setStage("ai_processing");
         }
@@ -57,14 +57,17 @@ export default function UploadDocument({ onClose, onUploaded }: UploadDocumentPr
     return () => clearInterval(interval);
   }, [docId, stage, onUploaded, onClose]);
 
-  // Safety timeout: after 60 seconds of polling, show ready anyway
+  // Hard timeout: after 90 seconds (45 polls × 2 s) surface an error rather
+  // than silently treating an unfinished or failed document as ready.
+  // 90 s is generous — normal processing takes 5-15 s.
   useEffect(() => {
-    if (pollCount > 30 && stage !== "ready") {
-      setStage("ready");
-      onUploaded();
-      setTimeout(() => onClose(), 1500);
+    if (pollCount > 45 && stage !== "ready" && stage !== "error") {
+      setStage("error");
+      setError(
+        "Processing is taking longer than expected. The document was uploaded — check the Knowledge Hub for its status or use the Reprocess button to retry.",
+      );
     }
-  }, [pollCount, stage, onUploaded, onClose]);
+  }, [pollCount, stage]);
 
   const handleFile = async (file: File) => {
     setStage("uploading");
@@ -75,10 +78,12 @@ export default function UploadDocument({ onClose, onUploaded }: UploadDocumentPr
       setDocId(doc.id);
       setStage("extracting");
 
-      // Fire the edge function — it runs server-side while we poll
-      processDocument(doc.id).catch((err) => {
-        console.error("Processing failed:", err);
-        // Don't immediately error — the poll will catch it
+      // Fire the edge function — it runs server-side while we poll.
+      // On failure, mark the document as failed in the DB immediately so the
+      // poller surfaces an error rather than waiting for the hard timeout.
+      processDocument(doc.id).catch(async (err) => {
+        console.error("Processing edge function failed:", err);
+        await markDocumentFailed(doc.id);
       });
     } catch (err: any) {
       console.error(err);
