@@ -29,6 +29,12 @@ import {
 import { type Prompt } from "../lib/supabase";
 import { type DocumentRow } from "../services/documents";
 import {
+  CONTENT_OBJECTIVES,
+  CONTENT_TYPE_PLATFORM,
+  type ContentObjective,
+  type ContentType,
+} from "../types/content";
+import {
   generateContent,
   saveGeneratedDraft,
   logGenerationActivity,
@@ -43,11 +49,11 @@ interface ContentGeneratorProps {
   onDraftCreated: () => void;
 }
 
-const contentTypeOptions = [
+const contentTypeOptions: Array<{ label: ContentType; icon: typeof Megaphone }> = [
   { label: "LinkedIn Post", icon: Megaphone },
   { label: "Facebook Post", icon: MessageSquare },
-  { label: "Twitter/X Post", icon: Send },
-  { label: "Twitter/X Thread", icon: Send },
+  { label: "X Post", icon: Send },
+  { label: "X Thread", icon: Send },
   { label: "Instagram Caption", icon: Hash },
   { label: "Press Release", icon: Newspaper },
   { label: "Newsletter", icon: Mail },
@@ -59,23 +65,12 @@ const toneOptions = ["Professional", "Conversational", "Authoritative", "Friendl
 const lengthOptions = ["Short", "Medium", "Long"];
 const audienceOptions = ["Media Buyers", "Agency Leaders", "Brand Marketers", "Ad Tech Professionals", "CMOs", "General Audience"];
 
-const platformMap: Record<string, string> = {
-  "LinkedIn Post": "LinkedIn",
-  "Facebook Post": "Facebook",
-  "Twitter/X Post": "Twitter",
-  "Twitter/X Thread": "Twitter",
-  "Instagram Caption": "Instagram",
-  "Press Release": "PR",
-  "Newsletter": "Email",
-  "Blog Article": "Blog",
-  "Sales Email": "Email",
-};
-
 export default function ContentGenerator({ prompts, documents, onDraftCreated }: ContentGeneratorProps) {
-  const [contentType, setContentType] = useState("LinkedIn Post");
+  const [contentType, setContentType] = useState<ContentType>("LinkedIn Post");
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("Professional");
   const [audience, setAudience] = useState("Media Buyers");
+  const [objective, setObjective] = useState<ContentObjective>("Inform");
   const [outputLength, setOutputLength] = useState("Medium");
   const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -84,6 +79,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
   const [additionalInstructions, setAdditionalInstructions] = useState("");
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<GeneratedResult | null>(null);
+  const [sourceNotice, setSourceNotice] = useState<string | null>(null);
   const [editableContent, setEditableContent] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -125,6 +121,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
     if (!canGenerate) return;
     setGenerating(true);
     setError(null);
+    setSourceNotice(null);
     setSaved(false);
 
     try {
@@ -133,6 +130,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
         topic: topic.trim() || undefined,
         tone,
         audience,
+        objective,
         outputLength,
         documentIds: selectedDocIds,
         additionalInstructions: additionalInstructions.trim() || undefined,
@@ -141,6 +139,14 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
       const generated = await generateContent(params);
       setResult(generated);
       setEditableContent(generated.content);
+      const unavailableCount = generated.sourceUsage.unavailableIds.length;
+      const unusableCount = generated.sourceUsage.unusableIds.length;
+      if (unavailableCount || unusableCount) {
+        setSourceNotice([
+          unavailableCount ? `${unavailableCount} selected document(s) were unavailable` : "",
+          unusableCount ? `${unusableCount} selected document(s) had no usable extracted text` : "",
+        ].filter(Boolean).join("; ") + ".");
+      }
 
       // Log generation activity
       const wordCount = generated.content.split(/\s+/).filter(Boolean).length;
@@ -171,20 +177,37 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
         topic: topic.trim() || undefined,
         tone,
         audience,
+        objective,
         outputLength,
-        documentIds: selectedDocIds,
+        documentIds: result.sourceUsage.requestedIds,
         additionalInstructions: additionalInstructions.trim() || undefined,
       });
 
       await saveGeneratedDraft({
         title,
         content: editableContent,
-        platform: platformMap[contentType] || "LinkedIn",
+        platform: CONTENT_TYPE_PLATFORM[contentType],
         wordCount,
-        sourceDocumentIds: selectedDocIds,
+        sourceDocumentIds: result.sourceUsage.usedIds,
         generationPrompt,
         tone,
         targetAudience: audience,
+        contentType,
+        objective,
+        promptId: null,
+        generationConfig: {
+          contentType,
+          objective,
+          topic: topic.trim() || null,
+          tone,
+          audience,
+          outputLength,
+          additionalInstructions: additionalInstructions.trim() || null,
+          documentIds: [...result.sourceUsage.usedIds],
+          requestedDocumentIds: [...result.sourceUsage.requestedIds],
+          promptId: null,
+          origin: "content-generator",
+        },
         headline: result.headline,
         cta: result.cta,
         hashtags: result.hashtags,
@@ -212,6 +235,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
     setResult(null);
     setEditableContent("");
     setError(null);
+    setSourceNotice(null);
     setSaved(false);
     setShowClearConfirm(false);
   };
@@ -322,6 +346,26 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                     }`}
                   >
                     {a}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Objective */}
+            <div className="mt-4">
+              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <Target className="h-3.5 w-3.5" /> Objective
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {CONTENT_OBJECTIVES.map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => setObjective(item)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                      objective === item ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {item}
                   </button>
                 ))}
               </div>
@@ -577,6 +621,13 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
               <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>{error}</span>
+              </div>
+            )}
+
+            {sourceNotice && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{sourceNotice}</span>
               </div>
             )}
 

@@ -15,6 +15,31 @@ interface GenerateRequest {
   outputLength?: string;
   documentIds?: string[];
   additionalInstructions?: string;
+  objective: string;
+}
+
+interface SourceUsage {
+  requestedIds: string[];
+  foundIds: string[];
+  usableIds: string[];
+  usedIds: string[];
+  unavailableIds: string[];
+  unusableIds: string[];
+}
+
+interface SourceDocument {
+  id: string;
+  title: string;
+  summary: string | null;
+  extracted_text: string | null;
+  keywords: string[] | null;
+  category: string | null;
+  type: string | null;
+}
+
+interface PassageQuery {
+  phrases: string[];
+  terms: string[];
 }
 
 interface ContentFormatConfig {
@@ -48,7 +73,7 @@ const contentTypeConfig: Record<string, ContentFormatConfig> = {
     supportsCTA: true,
     supportsHashtags: true,
   },
-  "Twitter/X Post": {
+  "X Post": {
     system:
       "You are an expert social media writer. Write a single Twitter/X post (max 280 characters) that is punchy, engaging, and shareable. Make every word count.",
     maxTokens: 400,
@@ -56,7 +81,7 @@ const contentTypeConfig: Record<string, ContentFormatConfig> = {
     supportsCTA: true,
     supportsHashtags: true,
   },
-  "Twitter/X Thread": {
+  "X Thread": {
     system:
       "You are an expert B2B content writer. Write a Twitter/X thread of 5-8 tweets. Each tweet must be under 280 characters. Start with a strong hook tweet, deliver value in each subsequent tweet, and end with a CTA tweet. Format each tweet separated by '---'.",
     maxTokens: 1500,
@@ -109,6 +134,216 @@ const contentTypeConfig: Record<string, ContentFormatConfig> = {
 const VALID_CONTENT_TYPES = Object.keys(contentTypeConfig);
 const VALID_TONES = ["Professional", "Conversational", "Authoritative", "Friendly", "Persuasive", "Educational"];
 const VALID_LENGTHS = ["Short", "Medium", "Long"];
+const VALID_OBJECTIVES = ["Inform", "Educate", "Promote", "Announce", "Engage", "Persuade"];
+const MAX_DOCUMENT_CONTEXT_CHARS = 8000;
+const DOCUMENT_CONTEXT_PREFIX = "\n\nReference material from the knowledge base:\n";
+const MIN_BODY_CHARS = 200;
+const QUERY_STOP_WORDS = new Set([
+  "about", "additional", "also", "and", "are", "available", "base", "based", "contained",
+  "content", "create", "description", "document", "estimate", "explicitly", "facts", "for", "from",
+  "include", "infer", "information", "into", "invent", "knowledge", "missing", "not", "objective",
+  "only", "please", "ratings", "selected", "summary", "target", "that", "the", "their", "this",
+  "time", "tone", "use", "using", "what", "when", "where", "which", "with", "write", "your",
+]);
+
+const STRICT_GROUNDING_PATTERNS = [
+  /\buse only facts?\b/i,
+  /\bonly use information\b/i,
+  /\bexplicitly contained\b/i,
+  /\bbased only on\b/i,
+  /\bdo not infer\b/i,
+  /\bdo not estimate\b/i,
+  /\bdo not invent\b/i,
+];
+
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? "").trim();
+}
+
+function truncateText(value: string | null | undefined, maxLength: number): string {
+  const text = normalizeText(value);
+  return text.length <= maxLength ? text : `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function tokenizeQuery(value: string | null | undefined): string[] {
+  return normalizeText(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((term) => term.length > 2 && !QUERY_STOP_WORDS.has(term));
+}
+
+function buildPassageQuery(
+  topic: string | null | undefined,
+  objective: string | null | undefined,
+  additionalInstructions: string | null | undefined,
+): PassageQuery {
+  const topicTerms = tokenizeQuery(topic);
+  const terms = [...new Set([...topicTerms, ...tokenizeQuery(objective), ...tokenizeQuery(additionalInstructions)])];
+  const phrases = new Set<string>();
+  const topicRuns = normalizeText(topic).toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+    .reduce<string[][]>((runs, term) => {
+      if (term.length > 2 && !QUERY_STOP_WORDS.has(term)) {
+        runs[runs.length - 1].push(term);
+      } else if (runs[runs.length - 1].length > 0) {
+        runs.push([]);
+      }
+      return runs;
+    }, [[]]);
+  for (const run of topicRuns) {
+    for (const size of [3, 2]) {
+      for (let index = 0; index <= run.length - size; index++) {
+        phrases.add(run.slice(index, index + size).join(" "));
+      }
+    }
+  }
+  return { phrases: [...phrases], terms };
+}
+
+function isStrictGroundingRequest(...values: Array<string | null | undefined>): boolean {
+  const requestText = values.map(normalizeText).filter(Boolean).join(" ");
+  return STRICT_GROUNDING_PATTERNS.some((pattern) => pattern.test(requestText));
+}
+
+function countTermMatches(value: string | null | undefined, terms: string[]): number {
+  const text = normalizeText(value).toLowerCase();
+  return terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
+}
+
+function scoreDocument(doc: SourceDocument, query: PassageQuery): number {
+  const phraseScore = query.phrases.reduce((score, phrase) => {
+    return score + countTermMatches(doc.title, [phrase]) * 80 +
+      countTermMatches(doc.summary, [phrase]) * 30 +
+      countTermMatches(doc.extracted_text, [phrase]) * 10;
+  }, 0);
+  return phraseScore + countTermMatches(doc.title, query.terms) * 20 +
+    countTermMatches(doc.summary, query.terms) * 8 +
+    countTermMatches((doc.keywords ?? []).join(" "), query.terms) * 6 +
+    countTermMatches(doc.extracted_text, query.terms) * 2;
+}
+
+function selectRelevantPassage(text: string, query: PassageQuery, maxLength: number): string {
+  if (maxLength <= 0) return "";
+  if (text.length <= maxLength) return text;
+
+  const lower = text.toLowerCase();
+  const lastStart = text.length - maxLength;
+  const candidates = new Set<number>([0, lastStart]);
+  for (const anchor of [...query.phrases, ...query.terms]) {
+    let index = lower.indexOf(anchor);
+    while (index >= 0) {
+      candidates.add(Math.max(0, Math.min(lastStart, index - Math.floor(maxLength / 2))));
+      index = lower.indexOf(anchor, index + anchor.length);
+    }
+  }
+
+  let bestStart = 0;
+  let bestScore = -1;
+  for (const start of candidates) {
+    const window = lower.slice(start, start + maxLength);
+    const phraseScore = query.phrases.reduce((sum, phrase) => {
+      let matches = 0;
+      let index = window.indexOf(phrase);
+      while (index >= 0) {
+        matches++;
+        index = window.indexOf(phrase, index + phrase.length);
+      }
+      return sum + matches * phrase.length * 50;
+    }, 0);
+    const termScore = query.terms.reduce((sum, term) => {
+      let matches = 0;
+      let index = window.indexOf(term);
+      while (index >= 0) {
+        matches++;
+        index = window.indexOf(term, index + term.length);
+      }
+      return sum + matches * term.length;
+    }, 0);
+    const score = phraseScore + termScore;
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
+    }
+  }
+
+  return text.slice(bestStart, bestStart + maxLength).trim();
+}
+
+function allocateBudgets(lengths: number[], weights: number[], total: number): number[] {
+  const budgets = lengths.map(() => 0);
+  const remaining = [...lengths];
+  let available = Math.max(0, total);
+
+  while (available > 0 && remaining.some((length) => length > 0)) {
+    const active = remaining.map((length, index) => length > 0 ? index : -1).filter((index) => index >= 0);
+    const totalWeight = active.reduce((sum, index) => sum + Math.max(1, weights[index]), 0);
+    let distributed = 0;
+    for (const index of active) {
+      const share = Math.max(1, Math.floor(available * Math.max(1, weights[index]) / totalWeight));
+      const allocation = Math.min(share, remaining[index], available - distributed);
+      budgets[index] += allocation;
+      remaining[index] -= allocation;
+      distributed += allocation;
+      if (distributed >= available) break;
+    }
+    if (distributed === 0) break;
+    available -= distributed;
+  }
+
+  return budgets;
+}
+
+function buildDocumentContext(docs: SourceDocument[], query: PassageQuery): { context: string; usedIds: string[] } {
+  const blocksCap = MAX_DOCUMENT_CONTEXT_CHARS - DOCUMENT_CONTEXT_PREFIX.length;
+  const ranked = docs
+    .map((doc, requestIndex) => ({ doc, requestIndex, score: scoreDocument(doc, query) }))
+    .sort((a, b) => b.score - a.score || a.requestIndex - b.requestIndex);
+
+  const prepared = ranked.map(({ doc, score }) => {
+    const metadata = [
+      `Document ID: ${doc.id}`,
+      `Title: ${truncateText(doc.title, 200) || "Untitled document"}`,
+      `Summary: ${truncateText(doc.summary, 400) || "No summary available"}`,
+      `Keywords: ${truncateText((doc.keywords ?? []).join(", "), 300) || "N/A"}`,
+      `Category: ${truncateText(doc.category, 100) || "Uncategorized"}`,
+      `Type: ${truncateText(doc.type, 100) || "Document"}`,
+      "Content: ",
+    ].join("\n");
+    return { doc, score, metadata };
+  });
+
+  const included: typeof prepared = [];
+  let fixedChars = 0;
+  for (const item of prepared) {
+    const separatorChars = included.length > 0 ? 2 : 0;
+    const reservedBodyChars = (included.length + 1) * MIN_BODY_CHARS;
+    if (fixedChars + separatorChars + item.metadata.length + reservedBodyChars <= blocksCap) {
+      included.push(item);
+      fixedChars += separatorChars + item.metadata.length;
+    }
+  }
+
+  const bodyBudget = Math.max(0, blocksCap - fixedChars);
+  const budgets = allocateBudgets(
+    included.map(({ doc }) => normalizeText(doc.extracted_text).length),
+    included.map(({ score }) => score),
+    bodyBudget,
+  );
+  const blocks: string[] = [];
+  const usedIds: string[] = [];
+  for (let index = 0; index < included.length; index++) {
+    const item = included[index];
+    const passage = selectRelevantPassage(normalizeText(item.doc.extracted_text), query, budgets[index]);
+    if (!passage) continue;
+    const separator = blocks.length > 0 ? "\n\n" : "";
+    const block = item.metadata + passage;
+    if (blocks.join("\n\n").length + separator.length + block.length > blocksCap) continue;
+    blocks.push(block);
+    usedIds.push(item.doc.id);
+  }
+
+  return { context: blocks.join("\n\n"), usedIds };
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -125,6 +360,7 @@ Deno.serve(async (req: Request) => {
       outputLength = "Medium",
       documentIds = [],
       additionalInstructions,
+      objective,
     } = body;
 
     // ── Input validation ──────────────────────────────────────
@@ -152,6 +388,13 @@ Deno.serve(async (req: Request) => {
     if (!audience?.trim()) {
       return new Response(
         JSON.stringify({ error: "Target audience is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    if (!objective || !VALID_OBJECTIVES.includes(objective)) {
+      return new Response(
+        JSON.stringify({ error: `Invalid objective. Must be one of: ${VALID_OBJECTIVES.join(", ")}` }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -186,35 +429,42 @@ Deno.serve(async (req: Request) => {
 
     // ── Gather document context ───────────────────────────────
     let documentContext = "";
+    const requestedIds = [...new Set(documentIds)];
+    const sourceUsage: SourceUsage = {
+      requestedIds,
+      foundIds: [],
+      usableIds: [],
+      usedIds: [],
+      unavailableIds: [],
+      unusableIds: [],
+    };
+    const strictGrounding = requestedIds.length > 0 && isStrictGroundingRequest(topic, additionalInstructions);
     if (documentIds.length > 0) {
-      const { data: docs } = await supabase
+      const { data: docs, error: docsError } = await supabase
         .from("documents")
-        .select("title, summary, extracted_text, keywords, category, type")
-        .in("id", documentIds);
+        .select("id, title, summary, extracted_text, keywords, category, type")
+        .in("id", requestedIds);
 
-      if (docs && docs.length > 0) {
-        const contextParts = docs.map((d: {
-          title: string;
-          summary: string | null;
-          extracted_text: string | null;
-          keywords: string[] | null;
-          category: string;
-          type: string;
-        }) => {
-          const parts: string[] = [`Document: ${d.title}`];
-          if (d.summary) parts.push(`Summary: ${d.summary}`);
-          if (d.keywords && d.keywords.length > 0) parts.push(`Keywords: ${d.keywords.join(", ")}`);
-          if (d.extracted_text) {
-            const maxTextLen = 3000;
-            const text = d.extracted_text.length > maxTextLen
-              ? d.extracted_text.substring(0, maxTextLen) + "..."
-              : d.extracted_text;
-            parts.push(`Content: ${text}`);
-          }
-          parts.push(`Category: ${d.category}`);
-          return parts.join("\n");
-        });
-        documentContext = `\n\nReference material from the knowledge base:\n${contextParts.join("\n\n")}`;
+      if (docsError) {
+        return new Response(
+          JSON.stringify({ error: "Selected Knowledge Base documents could not be retrieved." }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const foundById = new Map(((docs ?? []) as SourceDocument[]).map((doc) => [doc.id, doc]));
+      const foundDocs = requestedIds.flatMap((id) => foundById.has(id) ? [foundById.get(id)!] : []);
+      const usableDocs = foundDocs.filter((doc) => normalizeText(doc.extracted_text).length > 0);
+      sourceUsage.foundIds = foundDocs.map((doc) => doc.id);
+      sourceUsage.usableIds = usableDocs.map((doc) => doc.id);
+      sourceUsage.unavailableIds = requestedIds.filter((id) => !foundById.has(id));
+      sourceUsage.unusableIds = foundDocs.filter((doc) => !normalizeText(doc.extracted_text)).map((doc) => doc.id);
+
+      const passageQuery = buildPassageQuery(topic, objective, additionalInstructions);
+      const built = buildDocumentContext(usableDocs, passageQuery);
+      sourceUsage.usedIds = built.usedIds;
+      if (built.context) {
+        documentContext = DOCUMENT_CONTEXT_PREFIX + built.context;
       }
     }
 
@@ -225,7 +475,20 @@ Deno.serve(async (req: Request) => {
     let systemPrompt = config.system;
     systemPrompt += `\n\nTone: ${tone}.`;
     systemPrompt += `\nTarget audience: ${audience}.`;
+    systemPrompt += `\nObjective: ${objective}.`;
     systemPrompt += `\nOutput length: ${outputLength} (${lengthGuide.words}). ${lengthGuide.note}`;
+    if (sourceUsage.requestedIds.length > 0) {
+      systemPrompt += "\n\nGrounding rules: Use the supplied Knowledge Base material as the only source for company-, programme-, product-, campaign-, or document-specific facts. Do not invent facts, names, figures, quotations, or claims that are absent from the supplied material. If a requested specific fact is missing, omit it or state the limitation without fabricating it.";
+    }
+    if (strictGrounding) {
+      systemPrompt += `\n\nSTRICT FACTUAL MODE: Follow this priority order:
+1. Source fidelity: every factual statement must be directly supported by the supplied Knowledge Base material.
+2. Requested-field completeness: include every factual field explicitly requested by the user when its value is available in the supplied material. Before responding, check each requested field against the context so an available value is not omitted.
+3. Unsupported fields: never invent a value to complete a requested field. Omit an unavailable field or explicitly say the selected source does not provide it.
+4. User-requested format and style.
+5. Marketing creativity.
+Do not reproduce every fact in the document; prioritize facts explicitly requested by the user and facts clearly necessary to answer the topic. Prefer neutral factual wording. Harmless descriptive language is allowed only when it does not imply an unsupported evaluation. Headlines and hooks may provide creative framing but must not add factual claims. CTAs and engagement questions may invite discussion but must not assert unsupported facts. Hashtags may describe supported topics or entities but must not introduce unsupported claims.`;
+    }
 
     // Structured output instructions
     const structuredParts: string[] = [
@@ -270,7 +533,7 @@ Deno.serve(async (req: Request) => {
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: 0.7,
+        temperature: strictGrounding ? 0.1 : 0.7,
         max_tokens: config.maxTokens,
       }),
     });
@@ -322,6 +585,7 @@ Deno.serve(async (req: Request) => {
         cta: parsed.cta || null,
         hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags : [],
         contentType,
+        sourceUsage,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
