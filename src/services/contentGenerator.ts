@@ -1,7 +1,5 @@
 import { supabase } from "../lib/supabase";
-import type { ContentObjective, ContentType, OutputLength } from "../types/content";
-import { withActiveWorkspace } from "../utils/workspaceOwnership";
-import { invokeAuthenticatedEdgeFunction } from "./edgeFunctions";
+import type { ContentObjective, ContentType } from "../types/content";
 
 export interface GenerationConfig {
   contentType: ContentType | null;
@@ -9,45 +7,12 @@ export interface GenerationConfig {
   topic: string | null;
   tone: string;
   audience: string;
-  outputLength: OutputLength | null;
+  outputLength: string | null;
   additionalInstructions: string | null;
   documentIds: string[];
   requestedDocumentIds?: string[];
   promptId: string | null;
-  template?: {
-    promptId: string;
-    name: string;
-    resolvedText: string;
-    requestedDefaults: {
-      contentType: string | null;
-      audience: string | null;
-      tone: string | null;
-      objective: string | null;
-      outputLength: string | null;
-    };
-  } | null;
-  transformation?: {
-    transformed: boolean;
-    latestAction: TransformationAction | null;
-    targetTone: string | null;
-    count: number;
-    originalResult: {
-      wordCount: number;
-      hasHeadline: boolean;
-      hasCta: boolean;
-      hashtagCount: number;
-    } | null;
-  };
   origin: "content-generator" | "knowledge-assistant";
-}
-
-export type TransformationAction = "shorten" | "expand" | "change_tone" | "improve";
-
-export interface StructuredGeneratedResult {
-  headline: string | null;
-  content: string;
-  cta: string | null;
-  hashtags: string[];
 }
 
 export interface GenerateContentParams {
@@ -55,26 +20,10 @@ export interface GenerateContentParams {
   topic?: string;
   tone: string;
   audience: string;
-  outputLength: OutputLength;
+  outputLength: string;
   documentIds: string[];
   additionalInstructions?: string;
-  templateInstructions?: string;
   objective: ContentObjective;
-  promptId?: string | null;
-}
-
-export interface TransformContentParams {
-  action: TransformationAction;
-  targetTone?: string;
-  effectiveTone?: string;
-  currentResult: StructuredGeneratedResult;
-  attribution: GenerateContentParams & {
-    requestedDocumentIds: string[];
-    actualSourceIds: string[];
-    promptId: string | null;
-    promptName: string | null;
-    resolvedTemplate: string | null;
-  };
 }
 
 export interface GeneratedResult {
@@ -111,8 +60,19 @@ export interface SaveDraftParams {
   generationConfig: GenerationConfig;
 }
 
-async function requestGeneratedContent(body: object, contentType: ContentType): Promise<GeneratedResult> {
-  const response = await invokeAuthenticatedEdgeFunction("generate-content", body as Record<string, unknown>);
+export async function generateContent(params: GenerateContentParams): Promise<GeneratedResult> {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/generate-content`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify(params),
+  });
 
   const data = await response.json();
 
@@ -125,7 +85,7 @@ async function requestGeneratedContent(body: object, contentType: ContentType): 
     headline: data.headline || null,
     cta: data.cta || null,
     hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
-    contentType,
+    contentType: params.contentType,
     sourceUsage: {
       requestedIds: Array.isArray(data.sourceUsage?.requestedIds) ? data.sourceUsage.requestedIds : [],
       foundIds: Array.isArray(data.sourceUsage?.foundIds) ? data.sourceUsage.foundIds : [],
@@ -137,23 +97,10 @@ async function requestGeneratedContent(body: object, contentType: ContentType): 
   };
 }
 
-export async function generateContent(params: GenerateContentParams): Promise<GeneratedResult> {
-  return requestGeneratedContent({ mode: "generate", ...params }, params.contentType);
-}
-
-export async function transformContent(params: TransformContentParams): Promise<GeneratedResult> {
-  return requestGeneratedContent({ mode: "transform", ...params }, params.attribution.contentType);
-}
-
-export async function incrementPromptUses(promptId: string): Promise<void> {
-  const { error } = await supabase.rpc("increment_prompt_uses", { p_prompt_id: promptId });
-  if (error) throw new Error(`Content was generated, but prompt usage could not be updated: ${error.message}`);
-}
-
 export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id: string }> {
   const { data, error } = await supabase
     .from("drafts")
-    .insert(withActiveWorkspace({
+    .insert({
       title: params.title,
       content: params.content,
       platform: params.platform,
@@ -171,14 +118,14 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       cta: params.cta ?? null,
       hashtags: params.hashtags ?? [],
       generation_config: params.generationConfig,
-    }))
+    })
     .select("id")
     .single();
 
   if (error) throw new Error(`Failed to save draft: ${error.message}`);
 
   // Create activity record
-  await supabase.from("activities").insert(withActiveWorkspace({
+  await supabase.from("activities").insert({
     type: "draft",
     description: `Saved AI-generated draft: "${params.title}"`,
     metadata: {
@@ -192,7 +139,7 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       objective: params.objective ?? null,
       prompt_id: params.promptId ?? null,
     },
-  }));
+  });
 
   return { id: data.id };
 }
@@ -203,7 +150,7 @@ export async function logGenerationActivity(
   documentCount: number,
   wordCount: number,
 ): Promise<void> {
-  await supabase.from("activities").insert(withActiveWorkspace({
+  await supabase.from("activities").insert({
     type: "generate",
     description: `AI generated ${contentType}${topic ? `: "${topic.substring(0, 60)}"` : ""}`,
     metadata: {
@@ -211,7 +158,7 @@ export async function logGenerationActivity(
       word_count: wordCount,
       source_document_count: documentCount,
     },
-  }));
+  });
 }
 
 export function buildGenerationPrompt(params: GenerateContentParams): string {
@@ -224,7 +171,6 @@ export function buildGenerationPrompt(params: GenerateContentParams): string {
   ];
   if (params.topic?.trim()) parts.push(`Topic: ${params.topic.trim()}`);
   if (params.documentIds.length > 0) parts.push(`Source Documents: ${params.documentIds.length} document(s)`);
-  if (params.templateInstructions?.trim()) parts.push(`Template Instructions: ${params.templateInstructions.trim()}`);
   if (params.additionalInstructions?.trim()) parts.push(`Instructions: ${params.additionalInstructions.trim()}`);
   return parts.join("\n");
 }

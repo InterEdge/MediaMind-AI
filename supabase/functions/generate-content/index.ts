@@ -1,11 +1,5 @@
+import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
-import {
-  buildTransformationInstruction,
-  isTransformationAction,
-  TRANSFORMATION_GROUNDING_PRIORITY,
-  type TransformationAction,
-} from "../_shared/contentTransformation.ts";
-import { authenticateEdgeRequest, edgeAuthorizationResponse, requireWorkspaceMembership } from "../_shared/edgeAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,7 +8,6 @@ const corsHeaders = {
 };
 
 interface GenerateRequest {
-  mode?: "generate";
   contentType: string;
   topic?: string;
   tone: string;
@@ -22,31 +15,7 @@ interface GenerateRequest {
   outputLength?: string;
   documentIds?: string[];
   additionalInstructions?: string;
-  templateInstructions?: string;
   objective: string;
-  workspaceId?: string;
-  promptId?: string | null;
-}
-
-interface TransformRequest {
-  mode: "transform";
-  action: TransformationAction;
-  targetTone?: string;
-  effectiveTone?: string;
-  currentResult: {
-    headline: string | null;
-    content: string;
-    cta: string | null;
-    hashtags: string[];
-  };
-  attribution: GenerateRequest & {
-    requestedDocumentIds: string[];
-    actualSourceIds: string[];
-    promptId: string | null;
-    promptName: string | null;
-    resolvedTemplate: string | null;
-  };
-  workspaceId?: string;
 }
 
 interface SourceUsage {
@@ -382,20 +351,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const auth = await authenticateEdgeRequest(req);
-    const body: GenerateRequest | TransformRequest = await req.json();
-    const workspaceId = await requireWorkspaceMembership(auth, body.workspaceId);
-    const supabase = auth.serviceClient;
-    const mode = body.mode ?? "generate";
-    if (mode !== "generate" && mode !== "transform") {
-      return new Response(
-        JSON.stringify({ error: "Invalid request mode. Must be generate or transform." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    const transformRequest = mode === "transform" ? body as TransformRequest : null;
-    const generationRequest = transformRequest?.attribution ?? body as GenerateRequest;
+    const body: GenerateRequest = await req.json();
     const {
       contentType,
       topic,
@@ -404,36 +360,8 @@ Deno.serve(async (req: Request) => {
       outputLength = "Medium",
       documentIds = [],
       additionalInstructions,
-      templateInstructions,
       objective,
-    } = generationRequest;
-
-    if (transformRequest) {
-      if (!isTransformationAction(transformRequest.action)) {
-        return new Response(
-          JSON.stringify({ error: "Invalid transformation action." }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      if (!transformRequest.currentResult?.content?.trim()) {
-        return new Response(
-          JSON.stringify({ error: "Current generated content is required for transformation." }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      if (transformRequest.action === "change_tone" && !VALID_TONES.includes(transformRequest.targetTone ?? "")) {
-        return new Response(
-          JSON.stringify({ error: `A valid target tone is required. Must be one of: ${VALID_TONES.join(", ")}` }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      if (transformRequest.effectiveTone && !VALID_TONES.includes(transformRequest.effectiveTone)) {
-        return new Response(
-          JSON.stringify({ error: `Invalid effective tone. Must be one of: ${VALID_TONES.join(", ")}` }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-    }
+    } = body;
 
     // ── Input validation ──────────────────────────────────────
     if (!contentType || !VALID_CONTENT_TYPES.includes(contentType)) {
@@ -475,9 +403,8 @@ Deno.serve(async (req: Request) => {
     const hasTopic = topic?.trim();
     const hasDocs = documentIds.length > 0;
     const hasInstructions = additionalInstructions?.trim();
-    const hasTemplateInstructions = templateInstructions?.trim();
 
-    if (!hasTopic && !hasDocs && !hasInstructions && !hasTemplateInstructions) {
+    if (!hasTopic && !hasDocs && !hasInstructions) {
       return new Response(
         JSON.stringify({ error: "Provide a topic, select at least one document, or add custom instructions to generate content." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -488,6 +415,8 @@ Deno.serve(async (req: Request) => {
     // Load OpenRouter API key with automatic fallback to the backup key.
     // See supabase/functions/_shared/openrouter.ts for details.
     const openrouterApiKey = getOpenRouterApiKey();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!openrouterApiKey) {
       return new Response(
@@ -496,22 +425,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const promptId = generationRequest.promptId ?? null;
-    if (promptId) {
-      const { data: prompt, error: promptError } = await supabase
-        .from("prompts")
-        .select("id")
-        .eq("id", promptId)
-        .eq("workspace_id", workspaceId)
-        .maybeSingle();
-      if (promptError) throw promptError;
-      if (!prompt) {
-        return new Response(JSON.stringify({ error: "Prompt is not available in this workspace." }), {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     // ── Gather document context ───────────────────────────────
     let documentContext = "";
@@ -524,27 +438,18 @@ Deno.serve(async (req: Request) => {
       unavailableIds: [],
       unusableIds: [],
     };
-    const strictGrounding = requestedIds.length > 0
-      && isStrictGroundingRequest(topic, [templateInstructions, additionalInstructions].filter(Boolean).join("\n"));
+    const strictGrounding = requestedIds.length > 0 && isStrictGroundingRequest(topic, additionalInstructions);
     if (documentIds.length > 0) {
       const { data: docs, error: docsError } = await supabase
         .from("documents")
         .select("id, title, summary, extracted_text, keywords, category, type")
-        .in("id", requestedIds)
-        .eq("workspace_id", workspaceId);
+        .in("id", requestedIds);
 
       if (docsError) {
         return new Response(
           JSON.stringify({ error: "Selected Knowledge Base documents could not be retrieved." }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
-      }
-
-      if ((docs ?? []).length !== requestedIds.length) {
-        return new Response(JSON.stringify({ error: "One or more selected documents are not available in this workspace." }), {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
       }
 
       const foundById = new Map(((docs ?? []) as SourceDocument[]).map((doc) => [doc.id, doc]));
@@ -568,13 +473,12 @@ Deno.serve(async (req: Request) => {
     const lengthGuide = LENGTH_GUIDE[outputLength];
 
     let systemPrompt = config.system;
-    const effectiveTone = transformRequest?.targetTone ?? transformRequest?.effectiveTone ?? tone;
-    systemPrompt += `\n\nTone: ${effectiveTone}.`;
+    systemPrompt += `\n\nTone: ${tone}.`;
     systemPrompt += `\nTarget audience: ${audience}.`;
     systemPrompt += `\nObjective: ${objective}.`;
     systemPrompt += `\nOutput length: ${outputLength} (${lengthGuide.words}). ${lengthGuide.note}`;
     if (sourceUsage.requestedIds.length > 0) {
-      systemPrompt += "\n\nGrounding rules: Use the supplied Knowledge Base material as the only source for company-, programme-, product-, campaign-, or document-specific facts. Do not invent facts, names, figures, quotations, or claims that are absent from the supplied material. If a requested specific fact is missing, omit it or state the limitation without fabricating it. These grounding rules and the supplied facts always outrank template and additional instructions.";
+      systemPrompt += "\n\nGrounding rules: Use the supplied Knowledge Base material as the only source for company-, programme-, product-, campaign-, or document-specific facts. Do not invent facts, names, figures, quotations, or claims that are absent from the supplied material. If a requested specific fact is missing, omit it or state the limitation without fabricating it.";
     }
     if (strictGrounding) {
       systemPrompt += `\n\nSTRICT FACTUAL MODE: Follow this priority order:
@@ -584,9 +488,6 @@ Deno.serve(async (req: Request) => {
 4. User-requested format and style.
 5. Marketing creativity.
 Do not reproduce every fact in the document; prioritize facts explicitly requested by the user and facts clearly necessary to answer the topic. Prefer neutral factual wording. Harmless descriptive language is allowed only when it does not imply an unsupported evaluation. Headlines and hooks may provide creative framing but must not add factual claims. CTAs and engagement questions may invite discussion but must not assert unsupported facts. Hashtags may describe supported topics or entities but must not introduce unsupported claims.`;
-    }
-    if (transformRequest) {
-      systemPrompt += `\n\nTRANSFORMATION MODE: ${TRANSFORMATION_GROUNDING_PRIORITY} ${buildTransformationInstruction(transformRequest.action, transformRequest.targetTone)}`;
     }
 
     // Structured output instructions
@@ -615,16 +516,8 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
     if (documentContext) {
       userPrompt += documentContext;
     }
-    if (transformRequest) {
-      userPrompt += `\n\nCurrent structured result to transform:\n${JSON.stringify(transformRequest.currentResult)}`;
-      userPrompt += `\n\nTransformation action: ${transformRequest.action}${transformRequest.targetTone ? ` (${transformRequest.targetTone})` : ""}.`;
-    } else {
-      if (templateInstructions?.trim()) {
-        userPrompt += `\n\nTemplate instructions: ${templateInstructions.trim()}`;
-      }
-      if (additionalInstructions?.trim()) {
-        userPrompt += `\n\nAdditional instructions: ${additionalInstructions.trim()}`;
-      }
+    if (additionalInstructions?.trim()) {
+      userPrompt += `\n\nAdditional instructions: ${additionalInstructions.trim()}`;
     }
 
     // ── Call OpenRouter ─────────────────────────────────────────
@@ -640,7 +533,7 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: strictGrounding ? 0.1 : transformRequest ? 0.4 : 0.7,
+        temperature: strictGrounding ? 0.1 : 0.7,
         max_tokens: config.maxTokens,
       }),
     });
@@ -697,8 +590,6 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
-    const authResponse = edgeAuthorizationResponse(err, corsHeaders);
-    if (authResponse) return authResponse;
     console.error("Generate content error:", err);
     return new Response(
       JSON.stringify({ error: err.message || "Internal server error" }),

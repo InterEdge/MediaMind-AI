@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import {
   Sparkles,
   Copy,
@@ -25,44 +25,27 @@ import {
   MessageSquare,
   Send,
   Trash2,
-  Minimize2,
-  Maximize2,
-  SlidersHorizontal,
-  Undo2,
 } from "lucide-react";
 import { type Prompt } from "../lib/supabase";
 import { type DocumentRow } from "../services/documents";
 import {
   CONTENT_OBJECTIVES,
-  AUDIENCE_OPTIONS,
   CONTENT_TYPE_PLATFORM,
-  OUTPUT_LENGTHS,
-  TONE_OPTIONS,
   type ContentObjective,
   type ContentType,
 } from "../types/content";
 import {
   generateContent,
-  incrementPromptUses,
   saveGeneratedDraft,
   logGenerationActivity,
   buildGenerationPrompt,
   downloadAsMarkdown,
-  type TransformationAction,
+  type GeneratedResult,
 } from "../services/contentGenerator";
-import { detectTemplatePlaceholders, getValidPromptDefaults, resolvePromptTemplate } from "../utils/promptTemplate";
-import {
-  summarizeOriginalResult,
-  canRevertTransformation,
-  type SuccessfulGenerationSnapshot,
-} from "../utils/contentTransformation";
-import { useContentTransformation } from "../hooks/useContentTransformation";
 
 interface ContentGeneratorProps {
   prompts: Prompt[];
   documents: DocumentRow[];
-  pendingPromptId: string | null;
-  onPendingPromptHandled: () => void;
   onDraftCreated: () => void;
 }
 
@@ -78,56 +61,31 @@ const contentTypeOptions: Array<{ label: ContentType; icon: typeof Megaphone }> 
   { label: "Sales Email", icon: Mail },
 ];
 
-export default function ContentGenerator({
-  prompts,
-  documents,
-  pendingPromptId,
-  onPendingPromptHandled,
-  onDraftCreated,
-}: ContentGeneratorProps) {
+const toneOptions = ["Professional", "Conversational", "Authoritative", "Friendly", "Persuasive", "Educational"];
+const lengthOptions = ["Short", "Medium", "Long"];
+const audienceOptions = ["Media Buyers", "Agency Leaders", "Brand Marketers", "Ad Tech Professionals", "CMOs", "General Audience"];
+
+export default function ContentGenerator({ prompts, documents, onDraftCreated }: ContentGeneratorProps) {
   const [contentType, setContentType] = useState<ContentType>("LinkedIn Post");
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("Professional");
   const [audience, setAudience] = useState("Media Buyers");
   const [objective, setObjective] = useState<ContentObjective>("Inform");
-  const [outputLength, setOutputLength] = useState<(typeof OUTPUT_LENGTHS)[number]>("Medium");
+  const [outputLength, setOutputLength] = useState("Medium");
   const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
-  const [generationAttribution, setGenerationAttribution] = useState<(SuccessfulGenerationSnapshot & {
-    prompt: Prompt | null;
-  }) | null>(null);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [showDocPicker, setShowDocPicker] = useState(true);
   const [docSearch, setDocSearch] = useState("");
   const [additionalInstructions, setAdditionalInstructions] = useState("");
   const [generating, setGenerating] = useState(false);
-  const transformation = useContentTransformation();
-  const transformationSession = transformation.session;
-  const result = transformationSession.currentResult;
-  const editableContent = transformationSession.editableContent;
+  const [result, setResult] = useState<GeneratedResult | null>(null);
   const [sourceNotice, setSourceNotice] = useState<string | null>(null);
+  const [editableContent, setEditableContent] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [showToneSelector, setShowToneSelector] = useState(false);
-
-  const applyTemplate = useCallback((prompt: Prompt) => {
-    setSelectedPrompt(prompt);
-    const defaults = getValidPromptDefaults(prompt);
-    if (defaults.contentType) setContentType(defaults.contentType);
-    if (defaults.audience) setAudience(defaults.audience);
-    if (defaults.tone) setTone(defaults.tone);
-    if (defaults.objective) setObjective(defaults.objective);
-    if (defaults.outputLength) setOutputLength(defaults.outputLength);
-  }, []);
-
-  useEffect(() => {
-    if (!pendingPromptId) return;
-    const prompt = prompts.find((item) => item.id === pendingPromptId);
-    if (prompt) applyTemplate(prompt);
-    onPendingPromptHandled();
-  }, [applyTemplate, onPendingPromptHandled, pendingPromptId, prompts]);
 
   const indexedDocs = useMemo(
     () => documents.filter((d) => d.status === "Indexed" || d.status === "Ready" || d.ai_status === "ready"),
@@ -157,38 +115,10 @@ export default function ContentGenerator({
     return true;
   });
 
-  const templateResolution = selectedPrompt
-    ? resolvePromptTemplate(selectedPrompt.template, {
-        topic: topic.trim(),
-        audience,
-        tone,
-        objective,
-        contentType,
-        length: outputLength,
-      })
-    : null;
-  const templatePlaceholders = selectedPrompt ? detectTemplatePlaceholders(selectedPrompt.template) : [];
-  const unresolvedTemplatePlaceholders = templateResolution?.unresolvedPlaceholders ?? [];
-
-  const isTransforming = transformationSession.status === "transforming";
-  const canRevert = canRevertTransformation(transformationSession);
-  const canGenerate = (topic.trim() || selectedDocIds.length > 0 || additionalInstructions.trim() || selectedPrompt)
-    && !generating
-    && !isTransforming;
-
-  const transformationStatus: Record<TransformationAction, string> = {
-    shorten: "Shortening...",
-    expand: "Expanding...",
-    change_tone: "Changing tone...",
-    improve: "Improving...",
-  };
+  const canGenerate = (topic.trim() || selectedDocIds.length > 0 || additionalInstructions.trim()) && !generating;
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
-    if (selectedPrompt && unresolvedTemplatePlaceholders.length > 0) {
-      setError(`Resolve template placeholders before generating: ${unresolvedTemplatePlaceholders.map((item) => `{${item}}`).join(", ")}.`);
-      return;
-    }
     setGenerating(true);
     setError(null);
     setSourceNotice(null);
@@ -203,27 +133,12 @@ export default function ContentGenerator({
         objective,
         outputLength,
         documentIds: selectedDocIds,
-        templateInstructions: templateResolution?.text.trim() || undefined,
         additionalInstructions: additionalInstructions.trim() || undefined,
-        promptId: selectedPrompt?.id ?? null,
       };
 
       const generated = await generateContent(params);
-      transformation.captureGeneration(generated);
-      setGenerationAttribution({
-        params: { ...params, documentIds: [...params.documentIds] },
-        sourceUsage: {
-          requestedIds: [...generated.sourceUsage.requestedIds],
-          foundIds: [...generated.sourceUsage.foundIds],
-          usableIds: [...generated.sourceUsage.usableIds],
-          usedIds: [...generated.sourceUsage.usedIds],
-          unavailableIds: [...generated.sourceUsage.unavailableIds],
-          unusableIds: [...generated.sourceUsage.unusableIds],
-        },
-        prompt: selectedPrompt,
-        resolvedTemplate: templateResolution?.text ?? null,
-      });
-      if (selectedPrompt) await incrementPromptUses(selectedPrompt.id);
+      setResult(generated);
+      setEditableContent(generated.content);
       const unavailableCount = generated.sourceUsage.unavailableIds.length;
       const unusableCount = generated.sourceUsage.unusableIds.length;
       if (unavailableCount || unusableCount) {
@@ -249,85 +164,48 @@ export default function ContentGenerator({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleTransform = async (action: TransformationAction, targetTone?: string) => {
-    if (!result || !generationAttribution || isTransforming || generating) return;
-    setError(null);
-    setSaved(false);
-    setShowToneSelector(false);
-    try {
-      const currentOutputTone = transformationSession.lineage.targetTone ?? generationAttribution.params.tone;
-      await transformation.transform(
-        generationAttribution,
-        result,
-        editableContent,
-        action,
-        targetTone,
-        currentOutputTone,
-      );
-    } catch {
-      // The transformation hook preserves the current result and exposes an actionable error.
-    }
-  };
-
-  const handleRevertTransformation = () => {
-    transformation.revert();
-    setSaved(false);
-    setShowToneSelector(false);
-  };
-
   const handleSave = async () => {
-    if (!result || !editableContent || !generationAttribution) return;
+    if (!result || !editableContent) return;
     setSaving(true);
     setError(null);
 
     try {
-      const { params, prompt, resolvedTemplate } = generationAttribution;
-      const title = (params.topic || result.headline || result.contentType).substring(0, 80);
+      const title = (topic || result.headline || result.contentType).substring(0, 80);
       const wordCount = editableContent.split(/\s+/).filter(Boolean).length;
       const generationPrompt = buildGenerationPrompt({
-        ...params,
+        contentType,
+        topic: topic.trim() || undefined,
+        tone,
+        audience,
+        objective,
+        outputLength,
         documentIds: result.sourceUsage.requestedIds,
+        additionalInstructions: additionalInstructions.trim() || undefined,
       });
 
       await saveGeneratedDraft({
         title,
         content: editableContent,
-        platform: CONTENT_TYPE_PLATFORM[params.contentType],
+        platform: CONTENT_TYPE_PLATFORM[contentType],
         wordCount,
         sourceDocumentIds: result.sourceUsage.usedIds,
         generationPrompt,
-        tone: params.tone,
-        targetAudience: params.audience,
-        contentType: params.contentType,
-        objective: params.objective,
-        promptId: prompt?.id ?? null,
+        tone,
+        targetAudience: audience,
+        contentType,
+        objective,
+        promptId: null,
         generationConfig: {
-          contentType: params.contentType,
-          objective: params.objective,
-          topic: params.topic ?? null,
-          tone: params.tone,
-          audience: params.audience,
-          outputLength: params.outputLength,
-          additionalInstructions: params.additionalInstructions ?? null,
+          contentType,
+          objective,
+          topic: topic.trim() || null,
+          tone,
+          audience,
+          outputLength,
+          additionalInstructions: additionalInstructions.trim() || null,
           documentIds: [...result.sourceUsage.usedIds],
           requestedDocumentIds: [...result.sourceUsage.requestedIds],
-          promptId: prompt?.id ?? null,
-          template: prompt && resolvedTemplate !== null ? {
-            promptId: prompt.id,
-            name: prompt.name,
-            resolvedText: resolvedTemplate,
-            requestedDefaults: {
-              contentType: prompt.content_type,
-              audience: prompt.default_audience,
-              tone: prompt.default_tone,
-              objective: prompt.default_objective,
-              outputLength: prompt.default_output_length,
-            },
-          } : null,
-          transformation: {
-            ...transformationSession.lineage,
-            originalResult: summarizeOriginalResult(transformationSession.originalResult),
-          },
+          promptId: null,
           origin: "content-generator",
         },
         headline: result.headline,
@@ -354,8 +232,8 @@ export default function ContentGenerator({
   };
 
   const doClear = () => {
-    transformation.clear();
-    setGenerationAttribution(null);
+    setResult(null);
+    setEditableContent("");
     setError(null);
     setSourceNotice(null);
     setSaved(false);
@@ -439,7 +317,7 @@ export default function ContentGenerator({
                 <Target className="h-3.5 w-3.5" /> Tone
               </label>
               <div className="flex flex-wrap gap-2">
-                {TONE_OPTIONS.map((t) => (
+                {toneOptions.map((t) => (
                   <button
                     key={t}
                     onClick={() => setTone(t)}
@@ -459,7 +337,7 @@ export default function ContentGenerator({
                 <Hash className="h-3.5 w-3.5" /> Target Audience
               </label>
               <div className="flex flex-wrap gap-2">
-                {AUDIENCE_OPTIONS.map((a) => (
+                {audienceOptions.map((a) => (
                   <button
                     key={a}
                     onClick={() => setAudience(a)}
@@ -499,7 +377,7 @@ export default function ContentGenerator({
                 <Type className="h-3.5 w-3.5" /> Output Length
               </label>
               <div className="flex flex-wrap gap-2">
-                {OUTPUT_LENGTHS.map((l) => (
+                {lengthOptions.map((l) => (
                   <button
                     key={l}
                     onClick={() => setOutputLength(l)}
@@ -666,38 +544,6 @@ export default function ContentGenerator({
           </div>
 
           {/* Prompt suggestions */}
-          {selectedPrompt && (
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">Selected Template</p>
-                  <h2 className="mt-1 text-sm font-semibold text-slate-800">{selectedPrompt.name}</h2>
-                  {templatePlaceholders.length > 0 && (
-                    <p className="mt-2 text-xs text-slate-600">
-                      Placeholders: {templatePlaceholders.map((item) => `{${item}}`).join(", ")}
-                    </p>
-                  )}
-                  {unresolvedTemplatePlaceholders.length > 0 && (
-                    <p className="mt-1 text-xs font-medium text-amber-700">
-                      Unresolved: {unresolvedTemplatePlaceholders.map((item) => `{${item}}`).join(", ")}
-                    </p>
-                  )}
-                  {templatePlaceholders.length > 0 && unresolvedTemplatePlaceholders.length === 0 && (
-                    <p className="mt-1 text-xs font-medium text-emerald-700">All template variables resolved</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => setSelectedPrompt(null)}
-                  className="shrink-0 rounded-lg p-1.5 text-blue-500 transition hover:bg-blue-100 hover:text-blue-700"
-                  aria-label="Clear selected template"
-                  title="Clear template"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
           {relevantPrompts.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-slate-800">Suggested Prompts</h2>
@@ -705,7 +551,7 @@ export default function ContentGenerator({
                 {relevantPrompts.slice(0, 4).map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => selectedPrompt?.id === p.id ? setSelectedPrompt(null) : applyTemplate(p)}
+                    onClick={() => setSelectedPrompt(selectedPrompt?.id === p.id ? null : p)}
                     className={`block w-full rounded-lg border p-3 text-left transition ${
                       selectedPrompt?.id === p.id
                         ? "border-blue-300 bg-blue-50"
@@ -739,6 +585,13 @@ export default function ContentGenerator({
                     {copied ? "Copied" : "Copy"}
                   </button>
                   <button
+                    onClick={handleGenerate}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Regenerate
+                  </button>
+                  <button
                     onClick={handleDownload}
                     className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
                   >
@@ -747,15 +600,14 @@ export default function ContentGenerator({
                   </button>
                   <button
                     onClick={handleClear}
-                    disabled={isTransforming}
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-red-50 hover:text-red-600"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Clear
                   </button>
                   <button
                     onClick={handleSave}
-                    disabled={saving || isTransforming}
+                    disabled={saving}
                     className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
                   >
                     {saved ? <Check className="h-3.5 w-3.5" /> : saving ? <Save className="h-3.5 w-3.5 animate-pulse" /> : <Save className="h-3.5 w-3.5" />}
@@ -765,93 +617,10 @@ export default function ContentGenerator({
               )}
             </div>
 
-            {result && !generating && (
-              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Transform</span>
-                <button
-                  onClick={() => handleTransform("shorten")}
-                  disabled={isTransforming}
-                  className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Minimize2 className="h-3.5 w-3.5" /> Shorten
-                </button>
-                <button
-                  onClick={() => handleTransform("expand")}
-                  disabled={isTransforming}
-                  className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Maximize2 className="h-3.5 w-3.5" /> Expand
-                </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowToneSelector((open) => !open)}
-                    disabled={isTransforming}
-                    aria-expanded={showToneSelector}
-                    className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" /> Change Tone
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                  {showToneSelector && !isTransforming && (
-                    <div className="absolute left-0 top-full z-20 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                      <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                        Current: {transformationSession.lineage.targetTone ?? generationAttribution?.params.tone}
-                      </p>
-                      {TONE_OPTIONS.map((option) => {
-                        const currentTone = transformationSession.lineage.targetTone ?? generationAttribution?.params.tone;
-                        return (
-                          <button
-                            key={option}
-                            onClick={() => handleTransform("change_tone", option)}
-                            disabled={option === currentTone}
-                            className="block w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300"
-                          >
-                            {option}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleTransform("improve")}
-                  disabled={isTransforming}
-                  className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Sparkles className="h-3.5 w-3.5" /> Improve
-                </button>
-
-                <span className="mx-1 h-5 w-px bg-slate-200" aria-hidden="true" />
-                <button
-                  onClick={handleGenerate}
-                  disabled={isTransforming}
-                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Run a new full generation using the current controls"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" /> Regenerate
-                </button>
-                {canRevert && (
-                  <button
-                    onClick={handleRevertTransformation}
-                    disabled={isTransforming}
-                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-blue-600 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Undo2 className="h-3.5 w-3.5" /> Revert
-                  </button>
-                )}
-                {isTransforming && transformationSession.activeAction && (
-                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-blue-600" role="status">
-                    <Wand2 className="h-3.5 w-3.5 animate-spin" />
-                    {transformationStatus[transformationSession.activeAction]}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {(error || transformationSession.error) && (
+            {error && (
               <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error || transformationSession.error}</span>
+                <span>{error}</span>
               </div>
             )}
 
@@ -893,7 +662,7 @@ export default function ContentGenerator({
                   </label>
                   <textarea
                     value={editableContent}
-                    onChange={(e) => transformation.editContent(e.target.value)}
+                    onChange={(e) => setEditableContent(e.target.value)}
                     rows={16}
                     className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                   />
