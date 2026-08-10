@@ -1,13 +1,29 @@
 import { supabase } from "../lib/supabase";
+import type { ContentObjective, ContentType } from "../types/content";
+
+export interface GenerationConfig {
+  contentType: ContentType | null;
+  objective: ContentObjective | null;
+  topic: string | null;
+  tone: string;
+  audience: string;
+  outputLength: string | null;
+  additionalInstructions: string | null;
+  documentIds: string[];
+  requestedDocumentIds?: string[];
+  promptId: string | null;
+  origin: "content-generator" | "knowledge-assistant";
+}
 
 export interface GenerateContentParams {
-  contentType: string;
+  contentType: ContentType;
   topic?: string;
   tone: string;
   audience: string;
   outputLength: string;
   documentIds: string[];
   additionalInstructions?: string;
+  objective: ContentObjective;
 }
 
 export interface GeneratedResult {
@@ -15,7 +31,15 @@ export interface GeneratedResult {
   headline: string | null;
   cta: string | null;
   hashtags: string[];
-  contentType: string;
+  contentType: ContentType;
+  sourceUsage: {
+    requestedIds: string[];
+    foundIds: string[];
+    usableIds: string[];
+    usedIds: string[];
+    unavailableIds: string[];
+    unusableIds: string[];
+  };
 }
 
 export interface SaveDraftParams {
@@ -30,6 +54,10 @@ export interface SaveDraftParams {
   headline?: string | null;
   cta?: string | null;
   hashtags?: string[];
+  contentType?: ContentType | null;
+  objective?: ContentObjective | null;
+  promptId?: string | null;
+  generationConfig: GenerationConfig;
 }
 
 export async function generateContent(params: GenerateContentParams): Promise<GeneratedResult> {
@@ -57,7 +85,15 @@ export async function generateContent(params: GenerateContentParams): Promise<Ge
     headline: data.headline || null,
     cta: data.cta || null,
     hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
-    contentType: data.contentType || params.contentType,
+    contentType: params.contentType,
+    sourceUsage: {
+      requestedIds: Array.isArray(data.sourceUsage?.requestedIds) ? data.sourceUsage.requestedIds : [],
+      foundIds: Array.isArray(data.sourceUsage?.foundIds) ? data.sourceUsage.foundIds : [],
+      usableIds: Array.isArray(data.sourceUsage?.usableIds) ? data.sourceUsage.usableIds : [],
+      usedIds: Array.isArray(data.sourceUsage?.usedIds) ? data.sourceUsage.usedIds : [],
+      unavailableIds: Array.isArray(data.sourceUsage?.unavailableIds) ? data.sourceUsage.unavailableIds : [],
+      unusableIds: Array.isArray(data.sourceUsage?.unusableIds) ? data.sourceUsage.unusableIds : [],
+    },
   };
 }
 
@@ -75,6 +111,13 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       generation_prompt: params.generationPrompt,
       tone: params.tone,
       target_audience: params.targetAudience,
+      content_type: params.contentType ?? null,
+      objective: params.objective ?? null,
+      prompt_id: params.promptId ?? null,
+      headline: params.headline ?? null,
+      cta: params.cta ?? null,
+      hashtags: params.hashtags ?? [],
+      generation_config: params.generationConfig,
     })
     .select("id")
     .single();
@@ -92,6 +135,9 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       source_document_ids: params.sourceDocumentIds,
       tone: params.tone,
       target_audience: params.targetAudience,
+      content_type: params.contentType ?? null,
+      objective: params.objective ?? null,
+      prompt_id: params.promptId ?? null,
     },
   });
 
@@ -121,6 +167,7 @@ export function buildGenerationPrompt(params: GenerateContentParams): string {
     `Tone: ${params.tone}`,
     `Target Audience: ${params.audience}`,
     `Output Length: ${params.outputLength}`,
+    `Objective: ${params.objective}`,
   ];
   if (params.topic?.trim()) parts.push(`Topic: ${params.topic.trim()}`);
   if (params.documentIds.length > 0) parts.push(`Source Documents: ${params.documentIds.length} document(s)`);

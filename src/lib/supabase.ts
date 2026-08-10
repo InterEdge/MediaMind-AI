@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { ContentObjective, ContentType } from "../types/content";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -37,6 +38,13 @@ export interface Draft {
   generation_prompt: string | null;
   tone: string | null;
   target_audience: string | null;
+  content_type: ContentType | null;
+  objective: ContentObjective | null;
+  prompt_id: string | null;
+  headline: string | null;
+  cta: string | null;
+  hashtags: string[] | null;
+  generation_config: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -50,7 +58,9 @@ export interface Post {
   scheduled_at: string | null;
   engagement_score: number;
   hashtags: string[];
+  draft_id: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 export interface Activity {

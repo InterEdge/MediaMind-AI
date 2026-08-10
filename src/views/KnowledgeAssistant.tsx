@@ -124,6 +124,21 @@ export default function KnowledgeAssistant({
         generationPrompt: draftModal.prompt,
         tone: "Professional",
         targetAudience: "General",
+        contentType: null,
+        objective: null,
+        promptId: null,
+        generationConfig: {
+          contentType: null,
+          objective: null,
+          topic: draftModal.prompt,
+          tone: "Professional",
+          audience: "General",
+          outputLength: null,
+          additionalInstructions: null,
+          documentIds: sourceDocIds,
+          promptId: null,
+          origin: "knowledge-assistant",
+        },
       });
 
       await logChatActivity("draft_from_answer", `Converted AI answer into draft: "${params.title}"`, {
