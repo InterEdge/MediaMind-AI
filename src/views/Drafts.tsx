@@ -1,7 +1,14 @@
 import { useState, useMemo } from "react";
-import { Search, FileText, Sparkles, Trash2, Eye, X, Edit3, Check, AlertCircle, Copy, Send } from "lucide-react";
+import { Search, FileText, Sparkles, Trash2, Eye, X, Edit3, Check, AlertCircle, Copy, Send, CalendarClock } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import type { Draft } from "../lib/supabase";
+import { scheduleApprovedDraft, transitionDraftStatus } from "../services/draftWorkflow";
+import {
+  DRAFT_WORKFLOW_STATUSES,
+  LEGACY_DRAFT_STATUSES,
+  getAllowedDraftTransitions,
+  type DraftWorkflowStatus,
+} from "../utils/draftWorkflow";
 
 interface DraftsProps {
   drafts: Draft[];
@@ -9,8 +16,7 @@ interface DraftsProps {
   onRefresh: () => void;
 }
 
-const statuses = ["All", "Draft", "In Review", "Approved", "Published"];
-const statusFlow = ["Draft", "In Review", "Approved", "Published"];
+const statuses = ["All", ...DRAFT_WORKFLOW_STATUSES, ...LEGACY_DRAFT_STATUSES];
 
 const statusBadge = (status: string) => {
   const map: Record<string, string> = {
@@ -32,10 +38,16 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
-  const [editStatus, setEditStatus] = useState("Draft");
   const [saving, setSaving] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
+  const [workflowNote, setWorkflowNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showScheduling, setShowScheduling] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [scheduling, setScheduling] = useState(false);
 
   const filtered = useMemo(() => {
     return drafts.filter((d) => {
@@ -48,14 +60,34 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
   const openDetail = (draft: Draft) => {
     setSelected(draft);
     setEditing(false);
+    setWorkflowNote(draft.review_note ?? "");
+    setShowScheduling(false);
+    setScheduleDate("");
+    setScheduleTime("");
     setError(null);
+    setWarning(null);
+  };
+
+  const handleSchedule = async () => {
+    if (!selected) return;
+    setScheduling(true);
+    setError(null);
+    setWarning(null);
+    try {
+      const result = await scheduleApprovedDraft(selected, scheduleDate, scheduleTime, onRefresh);
+      setWarning(result.activityWarning);
+      setShowScheduling(false);
+    } catch (scheduleError) {
+      setError(scheduleError instanceof Error ? scheduleError.message : "Failed to schedule post.");
+    } finally {
+      setScheduling(false);
+    }
   };
 
   const startEditing = () => {
     if (!selected) return;
     setEditTitle(selected.title);
     setEditContent(selected.content);
-    setEditStatus(selected.status);
     setEditing(true);
   };
 
@@ -71,7 +103,6 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
       .update({
         title: editTitle,
         content: editContent,
-        status: editStatus,
         word_count: wordCount,
         updated_at: new Date().toISOString(),
       })
@@ -89,7 +120,6 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
       ...selected,
       title: editTitle,
       content: editContent,
-      status: editStatus,
       word_count: wordCount,
     });
     onRefresh();
@@ -101,19 +131,28 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
     setSelected(null);
   };
 
-  const handleStatusChange = async (draft: Draft, newStatus: string) => {
-    const { error: updateError } = await supabase
-      .from("drafts")
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq("id", draft.id);
-
-    if (updateError) {
-      setError(updateError.message);
-      return;
+  const handleStatusChange = async (draft: Draft, newStatus: DraftWorkflowStatus) => {
+    setTransitioning(true);
+    setError(null);
+    setWarning(null);
+    try {
+      const { patch, activityWarning } = await transitionDraftStatus(draft, newStatus, workflowNote);
+      const updatedDraft: Draft = {
+        ...draft,
+        status: patch.status,
+        updated_at: patch.updated_at,
+        approved_at: patch.approved_at !== undefined ? patch.approved_at : draft.approved_at,
+        review_note: patch.review_note !== undefined ? patch.review_note : draft.review_note,
+      };
+      setSelected(updatedDraft);
+      setWorkflowNote(updatedDraft.review_note ?? "");
+      setWarning(activityWarning);
+      onRefresh();
+    } catch (transitionError) {
+      setError(transitionError instanceof Error ? transitionError.message : "Failed to update draft status.");
+    } finally {
+      setTransitioning(false);
     }
-
-    setSelected({ ...draft, status: newStatus });
-    onRefresh();
   };
 
   const handleCopy = () => {
@@ -121,11 +160,6 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
     navigator.clipboard.writeText(selected.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const nextStatus = (current: string) => {
-    const idx = statusFlow.indexOf(current);
-    return idx >= 0 && idx < statusFlow.length - 1 ? statusFlow[idx + 1] : null;
   };
 
   return (
@@ -266,25 +300,16 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
               </div>
             )}
 
+            {warning && (
+              <div className="mx-6 mt-4 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{warning}</span>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto px-6 py-5">
               {editing ? (
                 <div className="space-y-4">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Status</label>
-                    <div className="flex flex-wrap gap-2">
-                      {statusFlow.map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => setEditStatus(s)}
-                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                            editStatus === s ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                          }`}
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                   <div>
                     <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Content</label>
                     <textarea
@@ -297,7 +322,67 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
                   </div>
                 </div>
               ) : (
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-700">{selected.content}</pre>
+                <div className="space-y-4">
+                  {selected.status === "Approved" && showScheduling && (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                        <CalendarClock className="h-4 w-4 text-blue-600" /> Schedule Post
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-slate-600">
+                          Date
+                          <input
+                            type="date"
+                            value={scheduleDate}
+                            onChange={(event) => setScheduleDate(event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                        </label>
+                        <label className="text-xs font-medium text-slate-600">
+                          Time
+                          <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={(event) => setScheduleTime(event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                        </label>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-500">Date and time use your local timezone.</p>
+                      <div className="mt-3 flex justify-end gap-2">
+                        <button
+                          onClick={() => setShowScheduling(false)}
+                          disabled={scheduling}
+                          className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-white disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSchedule}
+                          disabled={scheduling}
+                          className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {scheduling ? "Scheduling..." : "Confirm Schedule"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-700">{selected.content}</pre>
+                  {getAllowedDraftTransitions(selected.status).length > 0 && (
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Review Note (optional)
+                      </label>
+                      <textarea
+                        value={workflowNote}
+                        onChange={(event) => setWorkflowNote(event.target.value)}
+                        rows={2}
+                        placeholder="Add a brief note for this workflow step"
+                        className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -341,15 +426,39 @@ export default function Drafts({ drafts, loading, onRefresh }: DraftsProps) {
                     >
                       <Edit3 className="h-4 w-4" /> Edit
                     </button>
-                    {nextStatus(selected.status) && (
+                    {selected.status === "Approved" && !showScheduling && (
                       <button
-                        onClick={() => handleStatusChange(selected, nextStatus(selected.status)!)}
+                        onClick={() => { setShowScheduling(true); setError(null); setWarning(null); }}
                         className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
                       >
-                        <Send className="h-4 w-4" />
-                        Move to {nextStatus(selected.status)}
+                        <CalendarClock className="h-4 w-4" /> Schedule Post
                       </button>
                     )}
+                    {getAllowedDraftTransitions(selected.status).map((nextStatus) => (
+                      <button
+                        key={nextStatus}
+                        onClick={() => handleStatusChange(selected, nextStatus)}
+                        disabled={transitioning}
+                        className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                          nextStatus === "Approved"
+                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                            : nextStatus === "Draft"
+                              ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
+                        }`}
+                      >
+                        <Send className="h-4 w-4" />
+                        {transitioning
+                          ? "Updating..."
+                          : nextStatus === "Approved"
+                            ? "Approve"
+                            : nextStatus === "Draft"
+                              ? "Return to Draft"
+                              : selected.status === "Approved"
+                                ? "Return to In Review"
+                                : "Move to In Review"}
+                      </button>
+                    ))}
                   </>
                 )}
               </div>

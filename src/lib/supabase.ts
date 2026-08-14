@@ -50,6 +50,8 @@ export interface Draft {
   cta: string | null;
   hashtags: string[] | null;
   generation_config: Record<string, unknown> | null;
+  approved_at: string | null;
+  review_note: string | null;
   created_at: string;
   updated_at: string;
 }
