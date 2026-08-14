@@ -141,7 +141,7 @@ export async function markDocumentFailed(id: string): Promise<void> {
   try {
     const { error } = await supabase
       .from("documents")
-      .update({ ai_status: "failed", status: "Ready" })
+      .update({ ai_status: "failed", status: "Failed" })
       .eq("id", id);
     if (error) {
       // Non-fatal: log for debugging. The upload poller's hard timeout will

@@ -13,6 +13,8 @@ import Sidebar from "./components/Sidebar";
 import TopNav from "./components/TopNav";
 import { supabase, type Notification, type Prompt, type Draft, type Post, type Activity } from "./lib/supabase";
 import { getDocuments, type DocumentRow } from "./services/documents";
+import { markAllNotificationsRead, markNotificationRead } from "./services/notifications";
+import { resolveUnreadCount } from "./utils/notifications";
 
 export type ViewId = "dashboard" | "knowledge" | "generator" | "assistant" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
 
@@ -40,15 +42,17 @@ function App() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [pendingDocumentId, setPendingDocumentId] = useState<string | null>(null);
   const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [documents, notifications, drafts, prompts, posts, activities] = await Promise.all([
+      const [documents, notifications, unreadNotifications, drafts, prompts, posts, activities] = await Promise.all([
         getDocuments(),
         supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(10),
+        supabase.from("notifications").select("id", { count: "exact", head: true }).eq("read", false),
         supabase.from("drafts").select("*").order("created_at", { ascending: false }),
         supabase.from("prompts").select("*").order("created_at", { ascending: false }),
         supabase.from("posts").select("*").order("created_at", { ascending: false }),
@@ -63,6 +67,7 @@ function App() {
         activities: (activities.data || []) as Activity[],
         notifications: (notifications.data || []) as Notification[],
       });
+      setUnreadCount(resolveUnreadCount(unreadNotifications.count));
     } catch (err) {
       console.error("Failed to load data:", err);
     } finally {
@@ -89,16 +94,29 @@ function App() {
     setRefreshKey((k) => k + 1);
   };
 
-  const handleMarkNotificationsRead = async () => {
-    try {
-      await supabase.from("notifications").update({ read: true }).neq("read", true);
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      console.error("Failed to mark notifications read:", err);
-    }
+  const handleMarkNotificationRead = async (id: string) => {
+    const notification = data.notifications.find((item) => item.id === id);
+    if (!notification || notification.read) return;
+    setData((current) => ({
+      ...current,
+      notifications: current.notifications.map((item) => item.id === id ? { ...item, read: true } : item),
+    }));
+    setUnreadCount((count) => Math.max(0, count - 1));
+    const result = await markNotificationRead(id);
+    if (result.warning) console.error(result.warning);
+    setRefreshKey((key) => key + 1);
   };
 
-  const unreadCount = data.notifications.filter((n) => !n.read).length;
+  const handleMarkAllNotificationsRead = async () => {
+    setData((current) => ({
+      ...current,
+      notifications: current.notifications.map((item) => ({ ...item, read: true })),
+    }));
+    setUnreadCount(0);
+    const result = await markAllNotificationsRead();
+    if (result.warning) console.error(result.warning);
+    setRefreshKey((key) => key + 1);
+  };
 
   return (
     <div className="flex min-h-screen bg-slate-100">
@@ -114,7 +132,8 @@ function App() {
           onMenuClick={() => setSidebarOpen(true)}
           unreadCount={unreadCount}
           notifications={data.notifications}
-          onRefresh={handleMarkNotificationsRead}
+          onMarkRead={handleMarkNotificationRead}
+          onMarkAllRead={handleMarkAllNotificationsRead}
           onNavigate={handleNavigate}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}

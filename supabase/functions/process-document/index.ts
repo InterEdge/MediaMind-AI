@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
+import {
+  emitDocumentProcessingNotification,
+  persistTerminalDocumentFailure,
+  type DocumentProcessingRepository,
+} from "../_shared/documentNotifications.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -333,6 +338,11 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  let failureContext: {
+    document: { id: string; title: string };
+    repository: DocumentProcessingRepository;
+  } | null = null;
+
   try {
     const { documentId }: ProcessRequest = await req.json();
     if (!documentId) {
@@ -349,6 +359,19 @@ Deno.serve(async (req: Request) => {
     const openrouterApiKey = getOpenRouterApiKey();
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const documentProcessingRepository: DocumentProcessingRepository = {
+      async insertNotification(payload) {
+        const { error } = await supabase.from("notifications").insert(payload);
+        if (error) throw error;
+      },
+      async markDocumentFailed(failedDocumentId) {
+        const { error } = await supabase
+          .from("documents")
+          .update({ ai_status: "failed", status: "Failed" })
+          .eq("id", failedDocumentId);
+        if (error) throw error;
+      },
+    };
 
     // 1. Fetch the document record
     const { data: doc, error: fetchError } = await supabase
@@ -364,6 +387,11 @@ Deno.serve(async (req: Request) => {
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+    const processingDocument = { id: doc.id, title: doc.title || "Untitled document" };
+    failureContext = {
+      document: processingDocument,
+      repository: documentProcessingRepository,
+    };
 
     // 2. Set ai_status to extracting
     await supabase
@@ -451,6 +479,13 @@ Deno.serve(async (req: Request) => {
 
     if (updateError) throw updateError;
 
+    const notificationWarning = await emitDocumentProcessingNotification(
+      processingDocument,
+      "ready",
+      documentProcessingRepository,
+    );
+    if (notificationWarning) console.error(notificationWarning);
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -464,6 +499,17 @@ Deno.serve(async (req: Request) => {
     );
   } catch (err) {
     console.error("Process document error:", err);
+    if (failureContext) {
+      try {
+        const notificationWarning = await persistTerminalDocumentFailure(
+          failureContext.document,
+          failureContext.repository,
+        );
+        if (notificationWarning) console.error(notificationWarning);
+      } catch (failurePersistenceError) {
+        console.error("Failed to persist terminal document failure:", failurePersistenceError);
+      }
+    }
     return new Response(
       JSON.stringify({ error: err.message || "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
