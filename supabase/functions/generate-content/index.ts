@@ -1,5 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
+import {
+  buildTransformationInstruction,
+  isTransformationAction,
+  TRANSFORMATION_GROUNDING_PRIORITY,
+  type TransformationAction,
+} from "../_shared/contentTransformation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,6 +14,7 @@ const corsHeaders = {
 };
 
 interface GenerateRequest {
+  mode?: "generate";
   contentType: string;
   topic?: string;
   tone: string;
@@ -17,6 +24,26 @@ interface GenerateRequest {
   additionalInstructions?: string;
   templateInstructions?: string;
   objective: string;
+}
+
+interface TransformRequest {
+  mode: "transform";
+  action: TransformationAction;
+  targetTone?: string;
+  effectiveTone?: string;
+  currentResult: {
+    headline: string | null;
+    content: string;
+    cta: string | null;
+    hashtags: string[];
+  };
+  attribution: GenerateRequest & {
+    requestedDocumentIds: string[];
+    actualSourceIds: string[];
+    promptId: string | null;
+    promptName: string | null;
+    resolvedTemplate: string | null;
+  };
 }
 
 interface SourceUsage {
@@ -352,7 +379,17 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const body: GenerateRequest = await req.json();
+    const body: GenerateRequest | TransformRequest = await req.json();
+    const mode = body.mode ?? "generate";
+    if (mode !== "generate" && mode !== "transform") {
+      return new Response(
+        JSON.stringify({ error: "Invalid request mode. Must be generate or transform." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const transformRequest = mode === "transform" ? body as TransformRequest : null;
+    const generationRequest = transformRequest?.attribution ?? body as GenerateRequest;
     const {
       contentType,
       topic,
@@ -363,7 +400,34 @@ Deno.serve(async (req: Request) => {
       additionalInstructions,
       templateInstructions,
       objective,
-    } = body;
+    } = generationRequest;
+
+    if (transformRequest) {
+      if (!isTransformationAction(transformRequest.action)) {
+        return new Response(
+          JSON.stringify({ error: "Invalid transformation action." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      if (!transformRequest.currentResult?.content?.trim()) {
+        return new Response(
+          JSON.stringify({ error: "Current generated content is required for transformation." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      if (transformRequest.action === "change_tone" && !VALID_TONES.includes(transformRequest.targetTone ?? "")) {
+        return new Response(
+          JSON.stringify({ error: `A valid target tone is required. Must be one of: ${VALID_TONES.join(", ")}` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      if (transformRequest.effectiveTone && !VALID_TONES.includes(transformRequest.effectiveTone)) {
+        return new Response(
+          JSON.stringify({ error: `Invalid effective tone. Must be one of: ${VALID_TONES.join(", ")}` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    }
 
     // ── Input validation ──────────────────────────────────────
     if (!contentType || !VALID_CONTENT_TYPES.includes(contentType)) {
@@ -477,7 +541,8 @@ Deno.serve(async (req: Request) => {
     const lengthGuide = LENGTH_GUIDE[outputLength];
 
     let systemPrompt = config.system;
-    systemPrompt += `\n\nTone: ${tone}.`;
+    const effectiveTone = transformRequest?.targetTone ?? transformRequest?.effectiveTone ?? tone;
+    systemPrompt += `\n\nTone: ${effectiveTone}.`;
     systemPrompt += `\nTarget audience: ${audience}.`;
     systemPrompt += `\nObjective: ${objective}.`;
     systemPrompt += `\nOutput length: ${outputLength} (${lengthGuide.words}). ${lengthGuide.note}`;
@@ -492,6 +557,9 @@ Deno.serve(async (req: Request) => {
 4. User-requested format and style.
 5. Marketing creativity.
 Do not reproduce every fact in the document; prioritize facts explicitly requested by the user and facts clearly necessary to answer the topic. Prefer neutral factual wording. Harmless descriptive language is allowed only when it does not imply an unsupported evaluation. Headlines and hooks may provide creative framing but must not add factual claims. CTAs and engagement questions may invite discussion but must not assert unsupported facts. Hashtags may describe supported topics or entities but must not introduce unsupported claims.`;
+    }
+    if (transformRequest) {
+      systemPrompt += `\n\nTRANSFORMATION MODE: ${TRANSFORMATION_GROUNDING_PRIORITY} ${buildTransformationInstruction(transformRequest.action, transformRequest.targetTone)}`;
     }
 
     // Structured output instructions
@@ -520,11 +588,16 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
     if (documentContext) {
       userPrompt += documentContext;
     }
-    if (templateInstructions?.trim()) {
-      userPrompt += `\n\nTemplate instructions: ${templateInstructions.trim()}`;
-    }
-    if (additionalInstructions?.trim()) {
-      userPrompt += `\n\nAdditional instructions: ${additionalInstructions.trim()}`;
+    if (transformRequest) {
+      userPrompt += `\n\nCurrent structured result to transform:\n${JSON.stringify(transformRequest.currentResult)}`;
+      userPrompt += `\n\nTransformation action: ${transformRequest.action}${transformRequest.targetTone ? ` (${transformRequest.targetTone})` : ""}.`;
+    } else {
+      if (templateInstructions?.trim()) {
+        userPrompt += `\n\nTemplate instructions: ${templateInstructions.trim()}`;
+      }
+      if (additionalInstructions?.trim()) {
+        userPrompt += `\n\nAdditional instructions: ${additionalInstructions.trim()}`;
+      }
     }
 
     // ── Call OpenRouter ─────────────────────────────────────────
@@ -540,7 +613,7 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: strictGrounding ? 0.1 : 0.7,
+        temperature: strictGrounding ? 0.1 : transformRequest ? 0.4 : 0.7,
         max_tokens: config.maxTokens,
       }),
     });
