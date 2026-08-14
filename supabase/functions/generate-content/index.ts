@@ -15,6 +15,7 @@ interface GenerateRequest {
   outputLength?: string;
   documentIds?: string[];
   additionalInstructions?: string;
+  templateInstructions?: string;
   objective: string;
 }
 
@@ -360,6 +361,7 @@ Deno.serve(async (req: Request) => {
       outputLength = "Medium",
       documentIds = [],
       additionalInstructions,
+      templateInstructions,
       objective,
     } = body;
 
@@ -403,8 +405,9 @@ Deno.serve(async (req: Request) => {
     const hasTopic = topic?.trim();
     const hasDocs = documentIds.length > 0;
     const hasInstructions = additionalInstructions?.trim();
+    const hasTemplateInstructions = templateInstructions?.trim();
 
-    if (!hasTopic && !hasDocs && !hasInstructions) {
+    if (!hasTopic && !hasDocs && !hasInstructions && !hasTemplateInstructions) {
       return new Response(
         JSON.stringify({ error: "Provide a topic, select at least one document, or add custom instructions to generate content." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -438,7 +441,8 @@ Deno.serve(async (req: Request) => {
       unavailableIds: [],
       unusableIds: [],
     };
-    const strictGrounding = requestedIds.length > 0 && isStrictGroundingRequest(topic, additionalInstructions);
+    const strictGrounding = requestedIds.length > 0
+      && isStrictGroundingRequest(topic, [templateInstructions, additionalInstructions].filter(Boolean).join("\n"));
     if (documentIds.length > 0) {
       const { data: docs, error: docsError } = await supabase
         .from("documents")
@@ -478,7 +482,7 @@ Deno.serve(async (req: Request) => {
     systemPrompt += `\nObjective: ${objective}.`;
     systemPrompt += `\nOutput length: ${outputLength} (${lengthGuide.words}). ${lengthGuide.note}`;
     if (sourceUsage.requestedIds.length > 0) {
-      systemPrompt += "\n\nGrounding rules: Use the supplied Knowledge Base material as the only source for company-, programme-, product-, campaign-, or document-specific facts. Do not invent facts, names, figures, quotations, or claims that are absent from the supplied material. If a requested specific fact is missing, omit it or state the limitation without fabricating it.";
+      systemPrompt += "\n\nGrounding rules: Use the supplied Knowledge Base material as the only source for company-, programme-, product-, campaign-, or document-specific facts. Do not invent facts, names, figures, quotations, or claims that are absent from the supplied material. If a requested specific fact is missing, omit it or state the limitation without fabricating it. These grounding rules and the supplied facts always outrank template and additional instructions.";
     }
     if (strictGrounding) {
       systemPrompt += `\n\nSTRICT FACTUAL MODE: Follow this priority order:
@@ -515,6 +519,9 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
     }
     if (documentContext) {
       userPrompt += documentContext;
+    }
+    if (templateInstructions?.trim()) {
+      userPrompt += `\n\nTemplate instructions: ${templateInstructions.trim()}`;
     }
     if (additionalInstructions?.trim()) {
       userPrompt += `\n\nAdditional instructions: ${additionalInstructions.trim()}`;

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Sparkles,
   Copy,
@@ -30,22 +30,29 @@ import { type Prompt } from "../lib/supabase";
 import { type DocumentRow } from "../services/documents";
 import {
   CONTENT_OBJECTIVES,
+  AUDIENCE_OPTIONS,
   CONTENT_TYPE_PLATFORM,
+  OUTPUT_LENGTHS,
+  TONE_OPTIONS,
   type ContentObjective,
   type ContentType,
 } from "../types/content";
 import {
   generateContent,
+  incrementPromptUses,
   saveGeneratedDraft,
   logGenerationActivity,
   buildGenerationPrompt,
   downloadAsMarkdown,
   type GeneratedResult,
 } from "../services/contentGenerator";
+import { detectTemplatePlaceholders, getValidPromptDefaults, resolvePromptTemplate } from "../utils/promptTemplate";
 
 interface ContentGeneratorProps {
   prompts: Prompt[];
   documents: DocumentRow[];
+  pendingPromptId: string | null;
+  onPendingPromptHandled: () => void;
   onDraftCreated: () => void;
 }
 
@@ -61,18 +68,25 @@ const contentTypeOptions: Array<{ label: ContentType; icon: typeof Megaphone }> 
   { label: "Sales Email", icon: Mail },
 ];
 
-const toneOptions = ["Professional", "Conversational", "Authoritative", "Friendly", "Persuasive", "Educational"];
-const lengthOptions = ["Short", "Medium", "Long"];
-const audienceOptions = ["Media Buyers", "Agency Leaders", "Brand Marketers", "Ad Tech Professionals", "CMOs", "General Audience"];
-
-export default function ContentGenerator({ prompts, documents, onDraftCreated }: ContentGeneratorProps) {
+export default function ContentGenerator({
+  prompts,
+  documents,
+  pendingPromptId,
+  onPendingPromptHandled,
+  onDraftCreated,
+}: ContentGeneratorProps) {
   const [contentType, setContentType] = useState<ContentType>("LinkedIn Post");
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("Professional");
   const [audience, setAudience] = useState("Media Buyers");
   const [objective, setObjective] = useState<ContentObjective>("Inform");
-  const [outputLength, setOutputLength] = useState("Medium");
+  const [outputLength, setOutputLength] = useState<(typeof OUTPUT_LENGTHS)[number]>("Medium");
   const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
+  const [generationAttribution, setGenerationAttribution] = useState<{
+    params: Parameters<typeof generateContent>[0];
+    prompt: Prompt | null;
+    resolvedTemplate: string | null;
+  } | null>(null);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [showDocPicker, setShowDocPicker] = useState(true);
   const [docSearch, setDocSearch] = useState("");
@@ -86,6 +100,23 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  const applyTemplate = useCallback((prompt: Prompt) => {
+    setSelectedPrompt(prompt);
+    const defaults = getValidPromptDefaults(prompt);
+    if (defaults.contentType) setContentType(defaults.contentType);
+    if (defaults.audience) setAudience(defaults.audience);
+    if (defaults.tone) setTone(defaults.tone);
+    if (defaults.objective) setObjective(defaults.objective);
+    if (defaults.outputLength) setOutputLength(defaults.outputLength);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingPromptId) return;
+    const prompt = prompts.find((item) => item.id === pendingPromptId);
+    if (prompt) applyTemplate(prompt);
+    onPendingPromptHandled();
+  }, [applyTemplate, onPendingPromptHandled, pendingPromptId, prompts]);
 
   const indexedDocs = useMemo(
     () => documents.filter((d) => d.status === "Indexed" || d.status === "Ready" || d.ai_status === "ready"),
@@ -115,10 +146,27 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
     return true;
   });
 
-  const canGenerate = (topic.trim() || selectedDocIds.length > 0 || additionalInstructions.trim()) && !generating;
+  const templateResolution = selectedPrompt
+    ? resolvePromptTemplate(selectedPrompt.template, {
+        topic: topic.trim(),
+        audience,
+        tone,
+        objective,
+        contentType,
+        length: outputLength,
+      })
+    : null;
+  const templatePlaceholders = selectedPrompt ? detectTemplatePlaceholders(selectedPrompt.template) : [];
+  const unresolvedTemplatePlaceholders = templateResolution?.unresolvedPlaceholders ?? [];
+
+  const canGenerate = (topic.trim() || selectedDocIds.length > 0 || additionalInstructions.trim() || selectedPrompt) && !generating;
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
+    if (selectedPrompt && unresolvedTemplatePlaceholders.length > 0) {
+      setError(`Resolve template placeholders before generating: ${unresolvedTemplatePlaceholders.map((item) => `{${item}}`).join(", ")}.`);
+      return;
+    }
     setGenerating(true);
     setError(null);
     setSourceNotice(null);
@@ -133,12 +181,19 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
         objective,
         outputLength,
         documentIds: selectedDocIds,
+        templateInstructions: templateResolution?.text.trim() || undefined,
         additionalInstructions: additionalInstructions.trim() || undefined,
       };
 
       const generated = await generateContent(params);
       setResult(generated);
+      setGenerationAttribution({
+        params: { ...params, documentIds: [...params.documentIds] },
+        prompt: selectedPrompt,
+        resolvedTemplate: templateResolution?.text ?? null,
+      });
       setEditableContent(generated.content);
+      if (selectedPrompt) await incrementPromptUses(selectedPrompt.id);
       const unavailableCount = generated.sourceUsage.unavailableIds.length;
       const unusableCount = generated.sourceUsage.unusableIds.length;
       if (unavailableCount || unusableCount) {
@@ -165,47 +220,54 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
   };
 
   const handleSave = async () => {
-    if (!result || !editableContent) return;
+    if (!result || !editableContent || !generationAttribution) return;
     setSaving(true);
     setError(null);
 
     try {
-      const title = (topic || result.headline || result.contentType).substring(0, 80);
+      const { params, prompt, resolvedTemplate } = generationAttribution;
+      const title = (params.topic || result.headline || result.contentType).substring(0, 80);
       const wordCount = editableContent.split(/\s+/).filter(Boolean).length;
       const generationPrompt = buildGenerationPrompt({
-        contentType,
-        topic: topic.trim() || undefined,
-        tone,
-        audience,
-        objective,
-        outputLength,
+        ...params,
         documentIds: result.sourceUsage.requestedIds,
-        additionalInstructions: additionalInstructions.trim() || undefined,
       });
 
       await saveGeneratedDraft({
         title,
         content: editableContent,
-        platform: CONTENT_TYPE_PLATFORM[contentType],
+        platform: CONTENT_TYPE_PLATFORM[params.contentType],
         wordCount,
         sourceDocumentIds: result.sourceUsage.usedIds,
         generationPrompt,
-        tone,
-        targetAudience: audience,
-        contentType,
-        objective,
-        promptId: null,
+        tone: params.tone,
+        targetAudience: params.audience,
+        contentType: params.contentType,
+        objective: params.objective,
+        promptId: prompt?.id ?? null,
         generationConfig: {
-          contentType,
-          objective,
-          topic: topic.trim() || null,
-          tone,
-          audience,
-          outputLength,
-          additionalInstructions: additionalInstructions.trim() || null,
+          contentType: params.contentType,
+          objective: params.objective,
+          topic: params.topic ?? null,
+          tone: params.tone,
+          audience: params.audience,
+          outputLength: params.outputLength,
+          additionalInstructions: params.additionalInstructions ?? null,
           documentIds: [...result.sourceUsage.usedIds],
           requestedDocumentIds: [...result.sourceUsage.requestedIds],
-          promptId: null,
+          promptId: prompt?.id ?? null,
+          template: prompt && resolvedTemplate !== null ? {
+            promptId: prompt.id,
+            name: prompt.name,
+            resolvedText: resolvedTemplate,
+            requestedDefaults: {
+              contentType: prompt.content_type,
+              audience: prompt.default_audience,
+              tone: prompt.default_tone,
+              objective: prompt.default_objective,
+              outputLength: prompt.default_output_length,
+            },
+          } : null,
           origin: "content-generator",
         },
         headline: result.headline,
@@ -233,6 +295,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
 
   const doClear = () => {
     setResult(null);
+    setGenerationAttribution(null);
     setEditableContent("");
     setError(null);
     setSourceNotice(null);
@@ -317,7 +380,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                 <Target className="h-3.5 w-3.5" /> Tone
               </label>
               <div className="flex flex-wrap gap-2">
-                {toneOptions.map((t) => (
+                {TONE_OPTIONS.map((t) => (
                   <button
                     key={t}
                     onClick={() => setTone(t)}
@@ -337,7 +400,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                 <Hash className="h-3.5 w-3.5" /> Target Audience
               </label>
               <div className="flex flex-wrap gap-2">
-                {audienceOptions.map((a) => (
+                {AUDIENCE_OPTIONS.map((a) => (
                   <button
                     key={a}
                     onClick={() => setAudience(a)}
@@ -377,7 +440,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                 <Type className="h-3.5 w-3.5" /> Output Length
               </label>
               <div className="flex flex-wrap gap-2">
-                {lengthOptions.map((l) => (
+                {OUTPUT_LENGTHS.map((l) => (
                   <button
                     key={l}
                     onClick={() => setOutputLength(l)}
@@ -544,6 +607,38 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
           </div>
 
           {/* Prompt suggestions */}
+          {selectedPrompt && (
+            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">Selected Template</p>
+                  <h2 className="mt-1 text-sm font-semibold text-slate-800">{selectedPrompt.name}</h2>
+                  {templatePlaceholders.length > 0 && (
+                    <p className="mt-2 text-xs text-slate-600">
+                      Placeholders: {templatePlaceholders.map((item) => `{${item}}`).join(", ")}
+                    </p>
+                  )}
+                  {unresolvedTemplatePlaceholders.length > 0 && (
+                    <p className="mt-1 text-xs font-medium text-amber-700">
+                      Unresolved: {unresolvedTemplatePlaceholders.map((item) => `{${item}}`).join(", ")}
+                    </p>
+                  )}
+                  {templatePlaceholders.length > 0 && unresolvedTemplatePlaceholders.length === 0 && (
+                    <p className="mt-1 text-xs font-medium text-emerald-700">All template variables resolved</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedPrompt(null)}
+                  className="shrink-0 rounded-lg p-1.5 text-blue-500 transition hover:bg-blue-100 hover:text-blue-700"
+                  aria-label="Clear selected template"
+                  title="Clear template"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {relevantPrompts.length > 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-slate-800">Suggested Prompts</h2>
@@ -551,7 +646,7 @@ export default function ContentGenerator({ prompts, documents, onDraftCreated }:
                 {relevantPrompts.slice(0, 4).map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => setSelectedPrompt(selectedPrompt?.id === p.id ? null : p)}
+                    onClick={() => selectedPrompt?.id === p.id ? setSelectedPrompt(null) : applyTemplate(p)}
                     className={`block w-full rounded-lg border p-3 text-left transition ${
                       selectedPrompt?.id === p.id
                         ? "border-blue-300 bg-blue-50"

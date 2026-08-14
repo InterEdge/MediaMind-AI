@@ -1,5 +1,5 @@
 import { supabase } from "../lib/supabase";
-import type { ContentObjective, ContentType } from "../types/content";
+import type { ContentObjective, ContentType, OutputLength } from "../types/content";
 
 export interface GenerationConfig {
   contentType: ContentType | null;
@@ -7,11 +7,23 @@ export interface GenerationConfig {
   topic: string | null;
   tone: string;
   audience: string;
-  outputLength: string | null;
+  outputLength: OutputLength | null;
   additionalInstructions: string | null;
   documentIds: string[];
   requestedDocumentIds?: string[];
   promptId: string | null;
+  template?: {
+    promptId: string;
+    name: string;
+    resolvedText: string;
+    requestedDefaults: {
+      contentType: string | null;
+      audience: string | null;
+      tone: string | null;
+      objective: string | null;
+      outputLength: string | null;
+    };
+  } | null;
   origin: "content-generator" | "knowledge-assistant";
 }
 
@@ -20,9 +32,10 @@ export interface GenerateContentParams {
   topic?: string;
   tone: string;
   audience: string;
-  outputLength: string;
+  outputLength: OutputLength;
   documentIds: string[];
   additionalInstructions?: string;
+  templateInstructions?: string;
   objective: ContentObjective;
 }
 
@@ -95,6 +108,11 @@ export async function generateContent(params: GenerateContentParams): Promise<Ge
       unusableIds: Array.isArray(data.sourceUsage?.unusableIds) ? data.sourceUsage.unusableIds : [],
     },
   };
+}
+
+export async function incrementPromptUses(promptId: string): Promise<void> {
+  const { error } = await supabase.rpc("increment_prompt_uses", { p_prompt_id: promptId });
+  if (error) throw new Error(`Content was generated, but prompt usage could not be updated: ${error.message}`);
 }
 
 export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id: string }> {
@@ -171,6 +189,7 @@ export function buildGenerationPrompt(params: GenerateContentParams): string {
   ];
   if (params.topic?.trim()) parts.push(`Topic: ${params.topic.trim()}`);
   if (params.documentIds.length > 0) parts.push(`Source Documents: ${params.documentIds.length} document(s)`);
+  if (params.templateInstructions?.trim()) parts.push(`Template Instructions: ${params.templateInstructions.trim()}`);
   if (params.additionalInstructions?.trim()) parts.push(`Instructions: ${params.additionalInstructions.trim()}`);
   return parts.join("\n");
 }

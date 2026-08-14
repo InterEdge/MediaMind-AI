@@ -1,12 +1,28 @@
 import { useState, useMemo } from "react";
-import { Search, Star, Copy, Check, Library, Plus, TrendingUp, Trash2, Edit3, X, AlertCircle } from "lucide-react";
+import { Search, Star, Copy, Check, Library, Plus, TrendingUp, Trash2, Edit3, X, AlertCircle, Wand2 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import type { Prompt } from "../lib/supabase";
+import {
+  AUDIENCE_OPTIONS,
+  CONTENT_OBJECTIVES,
+  CONTENT_TYPES,
+  OUTPUT_LENGTHS,
+  TONE_OPTIONS,
+  isAudienceOption,
+  isContentObjective,
+  isContentType,
+  isOutputLength,
+  isToneOption,
+  type ContentObjective,
+  type ContentType,
+  type OutputLength,
+} from "../types/content";
 
 interface PromptLibraryProps {
   prompts: Prompt[];
   loading: boolean;
   onRefresh: () => void;
+  onUseTemplate: (promptId: string) => void;
 }
 
 const categoryOptions = ["LinkedIn", "Advertising", "Proposal", "Strategy"];
@@ -24,6 +40,11 @@ interface EditorState {
   category: string;
   description: string;
   template: string;
+  contentType: ContentType | "";
+  defaultAudience: string;
+  defaultTone: string;
+  defaultObjective: ContentObjective | "";
+  defaultOutputLength: OutputLength | "";
 }
 
 const emptyEditor: EditorState = {
@@ -32,9 +53,14 @@ const emptyEditor: EditorState = {
   category: "LinkedIn",
   description: "",
   template: "",
+  contentType: "",
+  defaultAudience: "",
+  defaultTone: "",
+  defaultObjective: "",
+  defaultOutputLength: "",
 };
 
-export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLibraryProps) {
+export default function PromptLibrary({ prompts, loading, onRefresh, onUseTemplate }: PromptLibraryProps) {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [selected, setSelected] = useState<Prompt | null>(null);
@@ -42,6 +68,7 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const categories = useMemo(() => {
     const set = new Set(prompts.map((p) => p.category));
@@ -59,14 +86,24 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
   }, [prompts, search, category]);
 
   const toggleFavorite = async (prompt: Prompt) => {
-    await supabase.from("prompts").update({ is_favorite: !prompt.is_favorite }).eq("id", prompt.id);
+    setActionError(null);
+    const { error } = await supabase.from("prompts").update({ is_favorite: !prompt.is_favorite }).eq("id", prompt.id);
+    if (error) {
+      setActionError(`Failed to update favorite: ${error.message}`);
+      return;
+    }
     onRefresh();
   };
 
-  const handleCopy = (template: string) => {
-    navigator.clipboard.writeText(template);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async (template: string) => {
+    setActionError(null);
+    try {
+      await navigator.clipboard.writeText(template);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setActionError("Failed to copy the template to the clipboard.");
+    }
   };
 
   const openNewEditor = () => {
@@ -81,6 +118,11 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
       category: prompt.category,
       description: prompt.description ?? "",
       template: prompt.template,
+      contentType: isContentType(prompt.content_type) ? prompt.content_type : "",
+      defaultAudience: isAudienceOption(prompt.default_audience) ? prompt.default_audience : "",
+      defaultTone: isToneOption(prompt.default_tone) ? prompt.default_tone : "",
+      defaultObjective: isContentObjective(prompt.default_objective) ? prompt.default_objective : "",
+      defaultOutputLength: isOutputLength(prompt.default_output_length) ? prompt.default_output_length : "",
     });
     setError(null);
   };
@@ -104,6 +146,11 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
             category: editor.category,
             description: editor.description,
             template: editor.template,
+            content_type: editor.contentType || null,
+            default_audience: editor.defaultAudience || null,
+            default_tone: editor.defaultTone || null,
+            default_objective: editor.defaultObjective || null,
+            default_output_length: editor.defaultOutputLength || null,
           })
           .eq("id", editor.id);
 
@@ -114,6 +161,11 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
           category: editor.category,
           description: editor.description,
           template: editor.template,
+          content_type: editor.contentType || null,
+          default_audience: editor.defaultAudience || null,
+          default_tone: editor.defaultTone || null,
+          default_objective: editor.defaultObjective || null,
+          default_output_length: editor.defaultOutputLength || null,
           uses: 0,
           is_favorite: false,
         });
@@ -131,7 +183,12 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from("prompts").delete().eq("id", id);
+    setActionError(null);
+    const { error } = await supabase.from("prompts").delete().eq("id", id);
+    if (error) {
+      setActionError(`Failed to delete prompt: ${error.message}`);
+      return;
+    }
     setSelected(null);
     onRefresh();
   };
@@ -151,6 +208,18 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
           New Prompt
         </button>
       </div>
+
+      {actionError && (
+        <div className="flex items-start justify-between gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          <span className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            {actionError}
+          </span>
+          <button onClick={() => setActionError(null)} aria-label="Dismiss error">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -258,6 +327,12 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
               </button>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-5">
+              {actionError && (
+                <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{actionError}</span>
+                </div>
+              )}
               <p className="text-sm text-slate-600">{selected.description}</p>
               <h4 className="mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Template</h4>
               <div className="rounded-xl bg-slate-50 p-4">
@@ -272,6 +347,12 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
                 <Trash2 className="h-4 w-4" /> Delete
               </button>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => onUseTemplate(selected.id)}
+                  className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  <Wand2 className="h-4 w-4" /> Use Template
+                </button>
                 <button
                   onClick={() => handleCopy(selected.template)}
                   className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
@@ -354,7 +435,7 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
 
               <div>
                 <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Template</label>
-                <p className="mb-2 text-xs text-slate-400">Write the prompt instructions. Use &#123;topic&#125;, &#123;audience&#125;, and &#123;tone&#125; as placeholders.</p>
+                <p className="mb-2 text-xs text-slate-400">Supported placeholders: &#123;topic&#125;, &#123;audience&#125;, &#123;tone&#125;, &#123;objective&#125;, &#123;contentType&#125;, &#123;length&#125;.</p>
                 <textarea
                   value={editor.template}
                   onChange={(e) => setEditor({ ...editor, template: e.target.value })}
@@ -362,6 +443,67 @@ export default function PromptLibrary({ prompts, loading, onRefresh }: PromptLib
                   placeholder={"Write a LinkedIn post about {topic} for {audience}. Use a {tone} tone. Start with a strong hook..."}
                   className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
+              </div>
+
+              <div>
+                <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Generator Defaults (optional)</h4>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-medium text-slate-600">
+                    Content Type
+                    <select
+                      value={editor.contentType}
+                      onChange={(e) => setEditor({ ...editor, contentType: e.target.value as ContentType | "" })}
+                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">No default</option>
+                      {CONTENT_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-slate-600">
+                    Audience
+                    <select
+                      value={editor.defaultAudience}
+                      onChange={(e) => setEditor({ ...editor, defaultAudience: e.target.value })}
+                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">No default</option>
+                      {AUDIENCE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-slate-600">
+                    Tone
+                    <select
+                      value={editor.defaultTone}
+                      onChange={(e) => setEditor({ ...editor, defaultTone: e.target.value })}
+                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">No default</option>
+                      {TONE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-slate-600">
+                    Objective
+                    <select
+                      value={editor.defaultObjective}
+                      onChange={(e) => setEditor({ ...editor, defaultObjective: e.target.value as ContentObjective | "" })}
+                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">No default</option>
+                      {CONTENT_OBJECTIVES.map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-slate-600 sm:col-span-2">
+                    Output Length
+                    <select
+                      value={editor.defaultOutputLength}
+                      onChange={(e) => setEditor({ ...editor, defaultOutputLength: e.target.value as OutputLength | "" })}
+                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">No default</option>
+                      {OUTPUT_LENGTHS.map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                  </label>
+                </div>
               </div>
             </div>
 

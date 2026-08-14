@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { ContentObjective, ContentType } from "../types/content";
+import type { ContentObjective, ContentType, OutputLength } from "../types/content";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -23,6 +23,11 @@ export interface Prompt {
   description: string | null;
   uses: number | null;
   is_favorite: boolean | null;
+  content_type: ContentType | null;
+  default_audience: string | null;
+  default_tone: string | null;
+  default_objective: ContentObjective | null;
+  default_output_length: OutputLength | null;
   created_at: string;
 }
 
