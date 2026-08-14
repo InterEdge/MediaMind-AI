@@ -24,7 +24,28 @@ export interface GenerationConfig {
       outputLength: string | null;
     };
   } | null;
+  transformation?: {
+    transformed: boolean;
+    latestAction: TransformationAction | null;
+    targetTone: string | null;
+    count: number;
+    originalResult: {
+      wordCount: number;
+      hasHeadline: boolean;
+      hasCta: boolean;
+      hashtagCount: number;
+    } | null;
+  };
   origin: "content-generator" | "knowledge-assistant";
+}
+
+export type TransformationAction = "shorten" | "expand" | "change_tone" | "improve";
+
+export interface StructuredGeneratedResult {
+  headline: string | null;
+  content: string;
+  cta: string | null;
+  hashtags: string[];
 }
 
 export interface GenerateContentParams {
@@ -37,6 +58,20 @@ export interface GenerateContentParams {
   additionalInstructions?: string;
   templateInstructions?: string;
   objective: ContentObjective;
+}
+
+export interface TransformContentParams {
+  action: TransformationAction;
+  targetTone?: string;
+  effectiveTone?: string;
+  currentResult: StructuredGeneratedResult;
+  attribution: GenerateContentParams & {
+    requestedDocumentIds: string[];
+    actualSourceIds: string[];
+    promptId: string | null;
+    promptName: string | null;
+    resolvedTemplate: string | null;
+  };
 }
 
 export interface GeneratedResult {
@@ -73,7 +108,7 @@ export interface SaveDraftParams {
   generationConfig: GenerationConfig;
 }
 
-export async function generateContent(params: GenerateContentParams): Promise<GeneratedResult> {
+async function requestGeneratedContent(body: object, contentType: ContentType): Promise<GeneratedResult> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -84,7 +119,7 @@ export async function generateContent(params: GenerateContentParams): Promise<Ge
       Authorization: `Bearer ${anonKey}`,
       apikey: anonKey,
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify(body),
   });
 
   const data = await response.json();
@@ -98,7 +133,7 @@ export async function generateContent(params: GenerateContentParams): Promise<Ge
     headline: data.headline || null,
     cta: data.cta || null,
     hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
-    contentType: params.contentType,
+    contentType,
     sourceUsage: {
       requestedIds: Array.isArray(data.sourceUsage?.requestedIds) ? data.sourceUsage.requestedIds : [],
       foundIds: Array.isArray(data.sourceUsage?.foundIds) ? data.sourceUsage.foundIds : [],
@@ -108,6 +143,14 @@ export async function generateContent(params: GenerateContentParams): Promise<Ge
       unusableIds: Array.isArray(data.sourceUsage?.unusableIds) ? data.sourceUsage.unusableIds : [],
     },
   };
+}
+
+export async function generateContent(params: GenerateContentParams): Promise<GeneratedResult> {
+  return requestGeneratedContent({ mode: "generate", ...params }, params.contentType);
+}
+
+export async function transformContent(params: TransformContentParams): Promise<GeneratedResult> {
+  return requestGeneratedContent({ mode: "transform", ...params }, params.attribution.contentType);
 }
 
 export async function incrementPromptUses(promptId: string): Promise<void> {
