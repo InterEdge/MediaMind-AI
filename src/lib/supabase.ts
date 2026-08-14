@@ -12,6 +12,10 @@ export interface Notification {
   title: string;
   message: string;
   read: boolean;
+  related_record_id?: string | null;
+  related_record_type?: string | null;
+  metadata?: Record<string, unknown> | null;
+  event_key?: string | null;
   created_at: string;
 }
 

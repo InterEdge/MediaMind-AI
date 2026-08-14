@@ -1,4 +1,6 @@
 import { supabase, type Draft } from "../lib/supabase";
+import { createNotification } from "./notifications";
+import { combineSecondaryWarnings, getDraftNotificationEvent, getPostNotificationEvent } from "../utils/notifications";
 import {
   buildDraftTransitionPatch,
   executeDraftScheduling,
@@ -32,11 +34,23 @@ export async function transitionDraftStatus(
     },
   });
 
+  const notificationEvent = getDraftNotificationEvent({
+    draftId: draft.id,
+    title: draft.title,
+    previousStatus: draft.status,
+    nextStatus,
+    transitionAt: patch.updated_at,
+  });
+  const notificationResult = notificationEvent
+    ? await createNotification(notificationEvent)
+    : { warning: null };
+
   return {
     patch,
-    activityWarning: activityError
-      ? `Status updated, but workflow activity could not be recorded: ${activityError.message}`
-      : null,
+    activityWarning: combineSecondaryWarnings(
+      activityError ? `Status updated, but workflow activity could not be recorded: ${activityError.message}` : null,
+      notificationResult.warning,
+    ),
   };
 }
 
@@ -83,5 +97,24 @@ export async function scheduleApprovedDraft(
   time: string,
   onPostsChanged?: () => void,
 ) {
-  return executeDraftScheduling(draft, date, time, schedulingRepository, new Date(), onPostsChanged);
+  const result = await executeDraftScheduling(draft, date, time, schedulingRepository, new Date(), onPostsChanged);
+  if (result.rescheduled) return result;
+
+  const notificationEvent = getPostNotificationEvent({
+    operation: "schedule",
+    postId: result.postId,
+    draftId: draft.id,
+    title: draft.title,
+    previousStatus: "Unscheduled",
+    nextStatus: "Scheduled",
+    scheduledAt: result.scheduledAt,
+    eventAt: result.scheduledAt,
+  });
+  const notificationResult = notificationEvent
+    ? await createNotification(notificationEvent)
+    : { warning: null };
+  return {
+    ...result,
+    activityWarning: combineSecondaryWarnings(result.activityWarning, notificationResult.warning),
+  };
 }

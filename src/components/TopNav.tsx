@@ -7,13 +7,14 @@ interface TopNavProps {
   onMenuClick: () => void;
   unreadCount: number;
   notifications: Notification[];
-  onRefresh: () => void;
+  onMarkRead: (id: string) => void;
+  onMarkAllRead: () => void;
   onNavigate: (v: ViewId) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
 }
 
-export default function TopNav({ onMenuClick, unreadCount, notifications, onRefresh, onNavigate, searchQuery, onSearchChange }: TopNavProps) {
+export default function TopNav({ onMenuClick, unreadCount, notifications, onMarkRead, onMarkAllRead, onNavigate, searchQuery, onSearchChange }: TopNavProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -84,7 +85,7 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onRefr
             <div className="absolute right-0 mt-2 w-80 origin-top-right rounded-xl border border-slate-200 bg-white shadow-xl transition animate-in">
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <span className="text-sm font-semibold text-slate-800">Notifications</span>
-                <button onClick={onRefresh} className="text-xs font-medium text-blue-600 hover:text-blue-700">
+                <button disabled={unreadCount === 0} onClick={onMarkAllRead} className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:cursor-default disabled:text-slate-300">
                   Mark all read
                 </button>
               </div>
@@ -93,11 +94,14 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onRefr
                   <p className="px-4 py-8 text-center text-sm text-slate-400">No notifications</p>
                 ) : (
                   notifications.map((n) => (
-                    <div
+                    <button
                       key={n.id}
+                      type="button"
+                      onClick={() => onMarkRead(n.id)}
+                      disabled={n.read}
                       className={`flex gap-3 border-b border-slate-50 px-4 py-3 transition hover:bg-slate-50 ${
                         !n.read ? "bg-blue-50/40" : ""
-                      }`}
+                      } w-full text-left disabled:cursor-default`}
                     >
                       <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${notifColor(n.type)}`} />
                       <div className="min-w-0 flex-1">
@@ -105,7 +109,7 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onRefr
                         <p className="mt-0.5 text-xs text-slate-500">{n.message}</p>
                         <p className="mt-1 text-[11px] text-slate-400">{formatTime(n.created_at)}</p>
                       </div>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>

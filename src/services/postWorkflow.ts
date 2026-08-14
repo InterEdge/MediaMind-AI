@@ -1,4 +1,6 @@
 import { supabase, type Post } from "../lib/supabase";
+import { createNotification } from "./notifications";
+import { combineSecondaryWarnings, getPostNotificationEvent } from "../utils/notifications";
 import {
   executePostDelete,
   executePostEdit,
@@ -40,11 +42,39 @@ export const updateCalendarPost = (post: Post, input: PostEditInput) =>
 export const rescheduleCalendarPost = (post: Post, date: string, time: string) =>
   executePostReschedule(post, date, time, postWorkflowRepository);
 
-export const cancelCalendarPost = (post: Post) =>
-  executePostStatusChange(post, "Cancelled", postWorkflowRepository);
+export async function cancelCalendarPost(post: Post) {
+  const result = await executePostStatusChange(post, "Cancelled", postWorkflowRepository);
+  const eventAt = String(result.patch?.updated_at ?? new Date().toISOString());
+  const event = getPostNotificationEvent({
+    operation: "cancel",
+    postId: post.id,
+    draftId: post.draft_id,
+    title: post.title,
+    previousStatus: post.status,
+    nextStatus: "Cancelled",
+    scheduledAt: post.scheduled_at,
+    eventAt,
+  });
+  const notification = event ? await createNotification(event) : { warning: null };
+  return { ...result, activityWarning: combineSecondaryWarnings(result.activityWarning, notification.warning) };
+}
 
-export const markCalendarPostPublished = (post: Post) =>
-  executePostStatusChange(post, "Published", postWorkflowRepository);
+export async function markCalendarPostPublished(post: Post) {
+  const result = await executePostStatusChange(post, "Published", postWorkflowRepository);
+  const eventAt = String(result.patch?.updated_at ?? new Date().toISOString());
+  const event = getPostNotificationEvent({
+    operation: "publish",
+    postId: post.id,
+    draftId: post.draft_id,
+    title: post.title,
+    previousStatus: post.status,
+    nextStatus: "Published",
+    scheduledAt: post.scheduled_at,
+    eventAt,
+  });
+  const notification = event ? await createNotification(event) : { warning: null };
+  return { ...result, activityWarning: combineSecondaryWarnings(result.activityWarning, notification.warning) };
+}
 
 export const deleteCalendarPost = (post: Post) =>
   executePostDelete(post, postWorkflowRepository);
