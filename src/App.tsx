@@ -41,6 +41,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [pendingDocumentId, setPendingDocumentId] = useState<string | null>(null);
+  const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -147,6 +148,8 @@ function App() {
             <ContentGenerator
               prompts={data.prompts}
               documents={data.documents}
+              pendingPromptId={pendingPromptId}
+              onPendingPromptHandled={() => setPendingPromptId(null)}
               onDraftCreated={() => setRefreshKey((k) => k + 1)}
             />
           )}
@@ -155,6 +158,11 @@ function App() {
               prompts={data.prompts}
               loading={loading}
               onRefresh={() => setRefreshKey((k) => k + 1)}
+              onUseTemplate={(promptId) => {
+                setPendingPromptId(promptId);
+                setCurrentView("generator");
+                setSidebarOpen(false);
+              }}
             />
           )}
           {currentView === "drafts" && (
