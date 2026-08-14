@@ -173,7 +173,7 @@ function App() {
             />
           )}
           {currentView === "calendar" && (
-            <Calendar posts={data.posts} loading={loading} />
+            <Calendar posts={data.posts} loading={loading} onRefresh={() => setRefreshKey((k) => k + 1)} />
           )}
           {currentView === "analytics" && (
             <Analytics data={data} loading={loading} />
