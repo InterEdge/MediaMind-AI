@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { requireActiveWorkspaceId } from "../utils/workspaceOwnership";
 import type { DocumentRow } from "./documents";
 
 export interface SearchFilters {
@@ -152,7 +153,7 @@ export async function searchDocuments(
   // omits extracted_text — that would silently break full-text scoring.
   let baseQuery = supabase.from("documents").select(
     "id, title, type, category, file_size, status, summary, tags, uploaded_at, file_path, keywords, ai_status, extracted_text",
-  );
+  ).eq("workspace_id", requireActiveWorkspaceId());
 
   if (query) {
     const pattern = buildIlikePattern(query);

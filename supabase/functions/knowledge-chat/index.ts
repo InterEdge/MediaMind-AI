@@ -1,5 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
+import { authenticateEdgeRequest, edgeAuthorizationResponse, requireWorkspaceMembership } from "../_shared/edgeAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,6 +15,7 @@ interface ChatHistoryMessage {
 interface KnowledgeChatRequest {
   question: string;
   history?: ChatHistoryMessage[];
+  workspaceId?: string;
 }
 
 interface RetrievedDoc {
@@ -314,7 +315,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const auth = await authenticateEdgeRequest(req);
     const body: KnowledgeChatRequest = await req.json();
+    const workspaceId = await requireWorkspaceMembership(auth, body.workspaceId);
     const { question, history = [] } = body;
 
     // ── Input validation ──────────────────────────────────────
@@ -338,8 +341,6 @@ Deno.serve(async (req: Request) => {
     // Load OpenRouter API key with automatic fallback to the backup key.
     // See supabase/functions/_shared/openrouter.ts for details.
     const openrouterApiKey = getOpenRouterApiKey();
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!openrouterApiKey) {
       return new Response(
@@ -348,7 +349,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const supabase = auth.serviceClient;
     const aggregateIntent = isAggregateKnowledgeQuestion(question);
     console.log("[knowledge-chat] aggregateIntent", {
       detected: aggregateIntent,
@@ -359,6 +360,7 @@ Deno.serve(async (req: Request) => {
     const { data: allDocs, error: fetchError } = await supabase
       .from("documents")
       .select("id, title, summary, keywords, category, type, extracted_text, ai_status, status, uploaded_at")
+      .eq("workspace_id", workspaceId)
       .or("ai_status.eq.ready,status.in.(Ready,Indexed)")
       .order("uploaded_at", { ascending: false });
 
@@ -677,6 +679,8 @@ Deno.serve(async (req: Request) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    const authResponse = edgeAuthorizationResponse(err, corsHeaders);
+    if (authResponse) return authResponse;
     console.error("Knowledge chat error:", err);
     return new Response(
       JSON.stringify({ error: err.message || "Internal server error" }),

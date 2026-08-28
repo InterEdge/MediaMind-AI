@@ -7,6 +7,7 @@ import {
   type SchedulingRepository,
   type DraftWorkflowStatus,
 } from "../utils/draftWorkflow";
+import { assertWorkspaceLink, requireActiveWorkspaceId, withActiveWorkspace } from "../utils/workspaceOwnership";
 
 export interface TransitionDraftResult {
   patch: ReturnType<typeof buildDraftTransitionPatch>;
@@ -18,12 +19,13 @@ export async function transitionDraftStatus(
   nextStatus: DraftWorkflowStatus,
   reviewNote?: string | null,
 ): Promise<TransitionDraftResult> {
+  assertWorkspaceLink(draft, "Draft");
   const patch = buildDraftTransitionPatch(draft.status, nextStatus, reviewNote);
   const { error } = await supabase.from("drafts").update(patch).eq("id", draft.id);
 
   if (error) throw new Error(`Failed to update draft status: ${error.message}`);
 
-  const { error: activityError } = await supabase.from("activities").insert({
+  const { error: activityError } = await supabase.from("activities").insert(withActiveWorkspace({
     type: "draft",
     description: `Draft moved from ${draft.status} to ${nextStatus}: "${draft.title}"`,
     metadata: {
@@ -32,7 +34,7 @@ export async function transitionDraftStatus(
       next_status: nextStatus,
       review_note_supplied: Boolean(patch.review_note),
     },
-  });
+  }));
 
   const notificationEvent = getDraftNotificationEvent({
     draftId: draft.id,
@@ -60,24 +62,25 @@ const schedulingRepository: SchedulingRepository = {
       .from("posts")
       .select("id")
       .eq("draft_id", draftId)
+      .eq("workspace_id", requireActiveWorkspaceId())
       .maybeSingle();
     if (error) throw new Error(`Failed to check existing scheduled post: ${error.message}`);
     return data?.id ?? null;
   },
 
   async createPost(snapshot) {
-    const { data, error } = await supabase.from("posts").insert(snapshot).select("id").single();
+    const { data, error } = await supabase.from("posts").insert(withActiveWorkspace(snapshot)).select("id").single();
     if (error) throw new Error(`Failed to schedule post: ${error.message}`);
     return data.id;
   },
 
   async updatePost(postId, snapshot) {
-    const { error } = await supabase.from("posts").update(snapshot).eq("id", postId);
+    const { error } = await supabase.from("posts").update(withActiveWorkspace(snapshot)).eq("id", postId);
     if (error) throw new Error(`Failed to reschedule post: ${error.message}`);
   },
 
   async logSchedulingActivity({ draftId, postId, scheduledAt, rescheduled }) {
-    const { error } = await supabase.from("activities").insert({
+    const { error } = await supabase.from("activities").insert(withActiveWorkspace({
       type: "schedule",
       description: `${rescheduled ? "Rescheduled" : "Scheduled"} post for ${new Date(scheduledAt).toLocaleString()}`,
       metadata: {
@@ -86,7 +89,7 @@ const schedulingRepository: SchedulingRepository = {
         post_id: postId,
         scheduled_at: scheduledAt,
       },
-    });
+    }));
     if (error) throw new Error(error.message);
   },
 };
@@ -97,6 +100,7 @@ export async function scheduleApprovedDraft(
   time: string,
   onPostsChanged?: () => void,
 ) {
+  assertWorkspaceLink(draft, "Draft");
   const result = await executeDraftScheduling(draft, date, time, schedulingRepository, new Date(), onPostsChanged);
   if (result.rescheduled) return result;
 

@@ -17,6 +17,7 @@ export interface Notification {
   metadata?: Record<string, unknown> | null;
   event_key?: string | null;
   created_at: string;
+  workspace_id: string | null;
 }
 
 export interface Prompt {
@@ -33,6 +34,7 @@ export interface Prompt {
   default_objective: ContentObjective | null;
   default_output_length: OutputLength | null;
   created_at: string;
+  workspace_id: string | null;
 }
 
 export interface Draft {
@@ -58,6 +60,7 @@ export interface Draft {
   review_note: string | null;
   created_at: string;
   updated_at: string;
+  workspace_id: string | null;
 }
 
 export interface Post {
@@ -72,6 +75,7 @@ export interface Post {
   draft_id: string | null;
   created_at: string;
   updated_at: string | null;
+  workspace_id: string | null;
 }
 
 export interface Activity {
@@ -80,4 +84,5 @@ export interface Activity {
   description: string;
   metadata: Record<string, any>;
   created_at: string;
+  workspace_id: string | null;
 }

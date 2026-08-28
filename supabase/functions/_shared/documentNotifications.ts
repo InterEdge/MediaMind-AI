@@ -3,6 +3,7 @@ export type DocumentProcessingNotificationStatus = "ready" | "failed";
 export interface DocumentNotificationRecord {
   id: string;
   title: string;
+  workspace_id?: string | null;
 }
 
 export interface DocumentProcessingNotificationInsert {
@@ -17,6 +18,7 @@ export interface DocumentProcessingNotificationInsert {
     processing_status: DocumentProcessingNotificationStatus;
   };
   event_key: string;
+  workspace_id: string | null;
 }
 
 export interface DocumentProcessingRepository {
@@ -44,6 +46,7 @@ export function buildDocumentProcessingNotification(
       processing_status: status,
     },
     event_key: `document:${document.id}:processing:${status}`,
+    workspace_id: document.workspace_id ?? null,
   };
 }
 

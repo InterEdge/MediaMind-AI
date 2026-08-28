@@ -1,4 +1,3 @@
-import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
 import {
   buildTransformationInstruction,
@@ -6,6 +5,7 @@ import {
   TRANSFORMATION_GROUNDING_PRIORITY,
   type TransformationAction,
 } from "../_shared/contentTransformation.ts";
+import { authenticateEdgeRequest, edgeAuthorizationResponse, requireWorkspaceMembership } from "../_shared/edgeAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,6 +24,8 @@ interface GenerateRequest {
   additionalInstructions?: string;
   templateInstructions?: string;
   objective: string;
+  workspaceId?: string;
+  promptId?: string | null;
 }
 
 interface TransformRequest {
@@ -44,6 +46,7 @@ interface TransformRequest {
     promptName: string | null;
     resolvedTemplate: string | null;
   };
+  workspaceId?: string;
 }
 
 interface SourceUsage {
@@ -379,7 +382,10 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const auth = await authenticateEdgeRequest(req);
     const body: GenerateRequest | TransformRequest = await req.json();
+    const workspaceId = await requireWorkspaceMembership(auth, body.workspaceId);
+    const supabase = auth.serviceClient;
     const mode = body.mode ?? "generate";
     if (mode !== "generate" && mode !== "transform") {
       return new Response(
@@ -482,8 +488,6 @@ Deno.serve(async (req: Request) => {
     // Load OpenRouter API key with automatic fallback to the backup key.
     // See supabase/functions/_shared/openrouter.ts for details.
     const openrouterApiKey = getOpenRouterApiKey();
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!openrouterApiKey) {
       return new Response(
@@ -492,7 +496,22 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const promptId = generationRequest.promptId ?? null;
+    if (promptId) {
+      const { data: prompt, error: promptError } = await supabase
+        .from("prompts")
+        .select("id")
+        .eq("id", promptId)
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
+      if (promptError) throw promptError;
+      if (!prompt) {
+        return new Response(JSON.stringify({ error: "Prompt is not available in this workspace." }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     // ── Gather document context ───────────────────────────────
     let documentContext = "";
@@ -511,13 +530,21 @@ Deno.serve(async (req: Request) => {
       const { data: docs, error: docsError } = await supabase
         .from("documents")
         .select("id, title, summary, extracted_text, keywords, category, type")
-        .in("id", requestedIds);
+        .in("id", requestedIds)
+        .eq("workspace_id", workspaceId);
 
       if (docsError) {
         return new Response(
           JSON.stringify({ error: "Selected Knowledge Base documents could not be retrieved." }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
+      }
+
+      if ((docs ?? []).length !== requestedIds.length) {
+        return new Response(JSON.stringify({ error: "One or more selected documents are not available in this workspace." }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       const foundById = new Map(((docs ?? []) as SourceDocument[]).map((doc) => [doc.id, doc]));
@@ -670,6 +697,8 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    const authResponse = edgeAuthorizationResponse(err, corsHeaders);
+    if (authResponse) return authResponse;
     console.error("Generate content error:", err);
     return new Response(
       JSON.stringify({ error: err.message || "Internal server error" }),

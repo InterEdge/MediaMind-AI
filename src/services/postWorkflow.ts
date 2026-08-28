@@ -9,6 +9,7 @@ import {
   type PostEditInput,
   type PostWorkflowRepository,
 } from "../utils/postWorkflow";
+import { assertWorkspaceLink, withActiveWorkspace } from "../utils/workspaceOwnership";
 
 const postWorkflowRepository: PostWorkflowRepository = {
   async updatePost(postId, patch) {
@@ -20,7 +21,7 @@ const postWorkflowRepository: PostWorkflowRepository = {
     if (error) throw new Error(`Failed to delete post: ${error.message}`);
   },
   async logActivity({ operation, postId, draftId, previousStatus, nextStatus, scheduledAt }) {
-    const { error } = await supabase.from("activities").insert({
+    const { error } = await supabase.from("activities").insert(withActiveWorkspace({
       type: "schedule",
       description: `Post ${operation}: ${postId}`,
       metadata: {
@@ -31,18 +32,23 @@ const postWorkflowRepository: PostWorkflowRepository = {
         next_status: nextStatus,
         scheduled_at: scheduledAt,
       },
-    });
+    }));
     if (error) throw new Error(error.message);
   },
 };
 
-export const updateCalendarPost = (post: Post, input: PostEditInput) =>
-  executePostEdit(post, input, postWorkflowRepository);
+export const updateCalendarPost = (post: Post, input: PostEditInput) => {
+  assertWorkspaceLink(post, "Post");
+  return executePostEdit(post, input, postWorkflowRepository);
+};
 
-export const rescheduleCalendarPost = (post: Post, date: string, time: string) =>
-  executePostReschedule(post, date, time, postWorkflowRepository);
+export const rescheduleCalendarPost = (post: Post, date: string, time: string) => {
+  assertWorkspaceLink(post, "Post");
+  return executePostReschedule(post, date, time, postWorkflowRepository);
+};
 
 export async function cancelCalendarPost(post: Post) {
+  assertWorkspaceLink(post, "Post");
   const result = await executePostStatusChange(post, "Cancelled", postWorkflowRepository);
   const eventAt = String(result.patch?.updated_at ?? new Date().toISOString());
   const event = getPostNotificationEvent({
@@ -60,6 +66,7 @@ export async function cancelCalendarPost(post: Post) {
 }
 
 export async function markCalendarPostPublished(post: Post) {
+  assertWorkspaceLink(post, "Post");
   const result = await executePostStatusChange(post, "Published", postWorkflowRepository);
   const eventAt = String(result.patch?.updated_at ?? new Date().toISOString());
   const event = getPostNotificationEvent({
@@ -76,5 +83,7 @@ export async function markCalendarPostPublished(post: Post) {
   return { ...result, activityWarning: combineSecondaryWarnings(result.activityWarning, notification.warning) };
 }
 
-export const deleteCalendarPost = (post: Post) =>
-  executePostDelete(post, postWorkflowRepository);
+export const deleteCalendarPost = (post: Post) => {
+  assertWorkspaceLink(post, "Post");
+  return executePostDelete(post, postWorkflowRepository);
+};

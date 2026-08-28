@@ -1,10 +1,16 @@
-import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
 import {
   emitDocumentProcessingNotification,
   persistTerminalDocumentFailure,
   type DocumentProcessingRepository,
 } from "../_shared/documentNotifications.ts";
+import {
+  authenticateEdgeRequest,
+  edgeAuthorizationResponse,
+  EdgeAuthorizationError,
+  requireWorkspaceMembership,
+  requireWorkspaceStoragePath,
+} from "../_shared/edgeAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +20,7 @@ const corsHeaders = {
 
 interface ProcessRequest {
   documentId: string;
+  workspaceId?: string;
 }
 
 // ─── Text extraction ────────────────────────────────────────────
@@ -339,12 +346,13 @@ Deno.serve(async (req: Request) => {
   }
 
   let failureContext: {
-    document: { id: string; title: string };
+    document: { id: string; title: string; workspace_id: string };
     repository: DocumentProcessingRepository;
   } | null = null;
 
   try {
-    const { documentId }: ProcessRequest = await req.json();
+    const auth = await authenticateEdgeRequest(req);
+    const { documentId, workspaceId }: ProcessRequest = await req.json();
     if (!documentId) {
       return new Response(
         JSON.stringify({ error: "documentId is required" }),
@@ -352,13 +360,11 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     // Load OpenRouter API key with automatic fallback to the backup key.
     // See supabase/functions/_shared/openrouter.ts for details.
     const openrouterApiKey = getOpenRouterApiKey();
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const supabase = auth.serviceClient;
     const documentProcessingRepository: DocumentProcessingRepository = {
       async insertNotification(payload) {
         const { error } = await supabase.from("notifications").insert(payload);
@@ -387,7 +393,17 @@ Deno.serve(async (req: Request) => {
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    const processingDocument = { id: doc.id, title: doc.title || "Untitled document" };
+    if (workspaceId && workspaceId !== doc.workspace_id) {
+      throw new EdgeAuthorizationError("Document does not belong to the active workspace.", 403);
+    }
+    await requireWorkspaceMembership(auth, doc.workspace_id);
+    if (doc.file_path) requireWorkspaceStoragePath(doc.file_path, doc.workspace_id);
+
+    const processingDocument = {
+      id: doc.id,
+      title: doc.title || "Untitled document",
+      workspace_id: doc.workspace_id,
+    };
     failureContext = {
       document: processingDocument,
       repository: documentProcessingRepository,
@@ -397,7 +413,8 @@ Deno.serve(async (req: Request) => {
     await supabase
       .from("documents")
       .update({ ai_status: "extracting", status: "Processing" })
-      .eq("id", documentId);
+      .eq("id", documentId)
+      .eq("workspace_id", doc.workspace_id);
 
     // 3. Download file and extract text
     let extractedText = "";
@@ -428,7 +445,8 @@ Deno.serve(async (req: Request) => {
     await supabase
       .from("documents")
       .update({ extracted_text: extractedText, ai_status: "ai_processing" })
-      .eq("id", documentId);
+      .eq("id", documentId)
+      .eq("workspace_id", doc.workspace_id);
 
     // 4. Generate AI summary and keywords
     let summary: string;
@@ -475,7 +493,8 @@ Deno.serve(async (req: Request) => {
         ai_status: "ready",
         status: "Ready",
       })
-      .eq("id", documentId);
+      .eq("id", documentId)
+      .eq("workspace_id", doc.workspace_id);
 
     if (updateError) throw updateError;
 
@@ -498,6 +517,8 @@ Deno.serve(async (req: Request) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    const authResponse = edgeAuthorizationResponse(err, corsHeaders);
+    if (authResponse) return authResponse;
     console.error("Process document error:", err);
     if (failureContext) {
       try {

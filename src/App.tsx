@@ -15,6 +15,8 @@ import { supabase, type Notification, type Prompt, type Draft, type Post, type A
 import { getDocuments, type DocumentRow } from "./services/documents";
 import { markAllNotificationsRead, markNotificationRead } from "./services/notifications";
 import { resolveUnreadCount } from "./utils/notifications";
+import { useAuth } from "./contexts/AuthContext";
+import { getDisplayName } from "./utils/auth";
 
 export type ViewId = "dashboard" | "knowledge" | "generator" | "assistant" | "prompts" | "drafts" | "calendar" | "analytics" | "settings";
 
@@ -28,6 +30,7 @@ export interface DataState {
 }
 
 function App() {
+  const { user, profile, workspace, signOut } = useAuth();
   const [currentView, setCurrentView] = useState<ViewId>("dashboard");
   const [showUpload, setShowUpload] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -47,16 +50,17 @@ function App() {
   const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
+    if (!workspace) return;
     setLoading(true);
     try {
       const [documents, notifications, unreadNotifications, drafts, prompts, posts, activities] = await Promise.all([
         getDocuments(),
-        supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(10),
-        supabase.from("notifications").select("id", { count: "exact", head: true }).eq("read", false),
-        supabase.from("drafts").select("*").order("created_at", { ascending: false }),
-        supabase.from("prompts").select("*").order("created_at", { ascending: false }),
-        supabase.from("posts").select("*").order("created_at", { ascending: false }),
-        supabase.from("activities").select("*").order("created_at", { ascending: false }).limit(20),
+        supabase.from("notifications").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }).limit(10),
+        supabase.from("notifications").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id).eq("read", false),
+        supabase.from("drafts").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }),
+        supabase.from("prompts").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }),
+        supabase.from("posts").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }),
+        supabase.from("activities").select("*").eq("workspace_id", workspace.id).order("created_at", { ascending: false }).limit(20),
       ]);
 
       setData({
@@ -73,7 +77,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workspace]);
 
   useEffect(() => {
     loadData();
@@ -137,6 +141,10 @@ function App() {
           onNavigate={handleNavigate}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          userName={getDisplayName(profile?.display_name, user?.email)}
+          userEmail={user?.email ?? ""}
+          workspaceName={workspace?.name ?? ""}
+          onSignOut={signOut}
         />
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">

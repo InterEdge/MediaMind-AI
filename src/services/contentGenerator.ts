@@ -1,5 +1,7 @@
 import { supabase } from "../lib/supabase";
 import type { ContentObjective, ContentType, OutputLength } from "../types/content";
+import { withActiveWorkspace } from "../utils/workspaceOwnership";
+import { invokeAuthenticatedEdgeFunction } from "./edgeFunctions";
 
 export interface GenerationConfig {
   contentType: ContentType | null;
@@ -58,6 +60,7 @@ export interface GenerateContentParams {
   additionalInstructions?: string;
   templateInstructions?: string;
   objective: ContentObjective;
+  promptId?: string | null;
 }
 
 export interface TransformContentParams {
@@ -109,18 +112,7 @@ export interface SaveDraftParams {
 }
 
 async function requestGeneratedContent(body: object, contentType: ContentType): Promise<GeneratedResult> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-  const response = await fetch(`${supabaseUrl}/functions/v1/generate-content`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${anonKey}`,
-      apikey: anonKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await invokeAuthenticatedEdgeFunction("generate-content", body as Record<string, unknown>);
 
   const data = await response.json();
 
@@ -161,7 +153,7 @@ export async function incrementPromptUses(promptId: string): Promise<void> {
 export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id: string }> {
   const { data, error } = await supabase
     .from("drafts")
-    .insert({
+    .insert(withActiveWorkspace({
       title: params.title,
       content: params.content,
       platform: params.platform,
@@ -179,14 +171,14 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       cta: params.cta ?? null,
       hashtags: params.hashtags ?? [],
       generation_config: params.generationConfig,
-    })
+    }))
     .select("id")
     .single();
 
   if (error) throw new Error(`Failed to save draft: ${error.message}`);
 
   // Create activity record
-  await supabase.from("activities").insert({
+  await supabase.from("activities").insert(withActiveWorkspace({
     type: "draft",
     description: `Saved AI-generated draft: "${params.title}"`,
     metadata: {
@@ -200,7 +192,7 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       objective: params.objective ?? null,
       prompt_id: params.promptId ?? null,
     },
-  });
+  }));
 
   return { id: data.id };
 }
@@ -211,7 +203,7 @@ export async function logGenerationActivity(
   documentCount: number,
   wordCount: number,
 ): Promise<void> {
-  await supabase.from("activities").insert({
+  await supabase.from("activities").insert(withActiveWorkspace({
     type: "generate",
     description: `AI generated ${contentType}${topic ? `: "${topic.substring(0, 60)}"` : ""}`,
     metadata: {
@@ -219,7 +211,7 @@ export async function logGenerationActivity(
       word_count: wordCount,
       source_document_count: documentCount,
     },
-  });
+  }));
 }
 
 export function buildGenerationPrompt(params: GenerateContentParams): string {

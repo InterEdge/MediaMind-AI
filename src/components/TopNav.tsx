@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Menu, Search, Bell, ChevronDown } from "lucide-react";
 import type { Notification } from "../lib/supabase";
 import type { ViewId } from "../App";
+import { getInitials } from "../utils/auth";
 
 interface TopNavProps {
   onMenuClick: () => void;
@@ -12,9 +13,13 @@ interface TopNavProps {
   onNavigate: (v: ViewId) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  userName: string;
+  userEmail: string;
+  workspaceName: string;
+  onSignOut: () => Promise<void>;
 }
 
-export default function TopNav({ onMenuClick, unreadCount, notifications, onMarkRead, onMarkAllRead, onNavigate, searchQuery, onSearchChange }: TopNavProps) {
+export default function TopNav({ onMenuClick, unreadCount, notifications, onMarkRead, onMarkAllRead, onNavigate, searchQuery, onSearchChange, userName, userEmail, workspaceName, onSignOut }: TopNavProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -124,11 +129,11 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onMark
             className="flex items-center gap-2 rounded-lg p-1 pr-2 transition hover:bg-slate-100"
           >
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-sm font-semibold text-white">
-              AM
+              {getInitials(userName)}
             </div>
             <div className="hidden text-left sm:block">
-              <p className="text-sm font-semibold text-slate-700">Alex Morgan</p>
-              <p className="text-xs text-slate-400">Media Director</p>
+              <p className="text-sm font-semibold text-slate-700">{userName}</p>
+              <p className="max-w-40 truncate text-xs text-slate-400">{userEmail}</p>
             </div>
             <ChevronDown className="hidden h-4 w-4 text-slate-400 sm:block" />
           </button>
@@ -136,8 +141,9 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onMark
           {profileOpen && (
             <div className="absolute right-0 mt-2 w-56 origin-top-right rounded-xl border border-slate-200 bg-white shadow-xl transition animate-in">
               <div className="border-b border-slate-100 px-4 py-3">
-                <p className="text-sm font-semibold text-slate-800">Alex Morgan</p>
-                <p className="text-xs text-slate-400">alex@mediamind.ai</p>
+                <p className="text-sm font-semibold text-slate-800">{userName}</p>
+                <p className="truncate text-xs text-slate-400">{userEmail}</p>
+                {workspaceName && <p className="mt-1 truncate text-xs font-medium text-blue-600">{workspaceName}</p>}
               </div>
               <div className="py-1">
                 <button onClick={() => onNavigate("settings")} className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50">My Profile</button>
@@ -146,7 +152,7 @@ export default function TopNav({ onMenuClick, unreadCount, notifications, onMark
                 <button onClick={() => onNavigate("knowledge")} className="block w-full px-4 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50">Help Center</button>
               </div>
               <div className="border-t border-slate-100 py-1">
-                <button onClick={() => onNavigate("dashboard")} className="block w-full px-4 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50">Sign Out</button>
+                <button onClick={() => void onSignOut()} className="block w-full px-4 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50">Sign Out</button>
               </div>
             </div>
           )}

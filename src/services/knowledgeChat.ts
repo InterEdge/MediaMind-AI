@@ -1,4 +1,6 @@
 import { supabase } from "../lib/supabase";
+import { requireActiveWorkspaceId, withActiveWorkspace } from "../utils/workspaceOwnership";
+import { invokeAuthenticatedEdgeFunction } from "./edgeFunctions";
 
 export interface ChatSource {
   id: string;
@@ -23,6 +25,7 @@ export interface ChatSession {
   title: string;
   created_at: string;
   updated_at: string;
+  workspace_id: string | null;
 }
 
 export interface KnowledgeChatResult {
@@ -94,20 +97,9 @@ export async function askKnowledgeBase(
   question: string,
   history: HistoryMessage[],
 ): Promise<KnowledgeChatResult> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-  const response = await fetch(`${supabaseUrl}/functions/v1/knowledge-chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${anonKey}`,
-      apikey: anonKey,
-    },
-    body: JSON.stringify({
-      question,
-      history: history.slice(-MAX_HISTORY),
-    }),
+  const response = await invokeAuthenticatedEdgeFunction("knowledge-chat", {
+    question,
+    history: history.slice(-MAX_HISTORY),
   });
 
   const data = await response.json();
@@ -127,7 +119,7 @@ export async function askKnowledgeBase(
 export async function createChatSession(title: string): Promise<ChatSession> {
   const { data, error } = await supabase
     .from("chat_sessions")
-    .insert({ title })
+    .insert(withActiveWorkspace({ title }))
     .select("*")
     .single();
 
@@ -139,6 +131,7 @@ export async function getChatSessions(): Promise<ChatSession[]> {
   const { data, error } = await supabase
     .from("chat_sessions")
     .select("*")
+    .eq("workspace_id", requireActiveWorkspaceId())
     .order("updated_at", { ascending: false });
 
   if (error) throw new Error(`Failed to load chat sessions: ${error.message}`);
@@ -215,11 +208,11 @@ export async function logChatActivity(
   metadata: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await supabase.from("activities").insert({
+    await supabase.from("activities").insert(withActiveWorkspace({
       type,
       description,
       metadata,
-    });
+    }));
   } catch (err) {
     console.error("Failed to log activity:", err);
   }
