@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { Search, Star, Copy, Check, Library, Plus, TrendingUp, Trash2, Edit3, X, AlertCircle, Wand2 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import type { Prompt } from "../lib/supabase";
+import { withActiveWorkspace } from "../utils/workspaceOwnership";
 import {
   AUDIENCE_OPTIONS,
   CONTENT_OBJECTIVES,
@@ -156,7 +157,7 @@ export default function PromptLibrary({ prompts, loading, onRefresh, onUseTempla
 
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("prompts").insert({
+        const { error } = await supabase.from("prompts").insert(withActiveWorkspace({
           name: editor.name,
           category: editor.category,
           description: editor.description,
@@ -168,7 +169,7 @@ export default function PromptLibrary({ prompts, loading, onRefresh, onUseTempla
           default_output_length: editor.defaultOutputLength || null,
           uses: 0,
           is_favorite: false,
-        });
+        }));
 
         if (error) throw error;
       }

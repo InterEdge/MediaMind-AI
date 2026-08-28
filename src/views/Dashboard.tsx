@@ -13,6 +13,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { DataState, ViewId } from "../App";
+import { useAuth } from "../contexts/AuthContext";
+import { getDisplayName } from "../utils/auth";
  
 interface DashboardProps {
   data: DataState;
@@ -22,6 +24,8 @@ interface DashboardProps {
 }
  
 export default function Dashboard({ data, loading, onNavigate, onUploadDocument }: DashboardProps) {
+  const { profile, user } = useAuth();
+  const displayName = getDisplayName(profile?.display_name, user?.email);
   const stats = [
     {
       label: "Documents Uploaded",
@@ -109,7 +113,7 @@ export default function Dashboard({ data, loading, onNavigate, onUploadDocument 
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Welcome back, Alex. Here\'s what\'s happening with your media operations.
+          Welcome back, {displayName}. Here\'s what\'s happening with your media operations.
         </p>
       </div>
  

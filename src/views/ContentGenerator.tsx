@@ -205,6 +205,7 @@ export default function ContentGenerator({
         documentIds: selectedDocIds,
         templateInstructions: templateResolution?.text.trim() || undefined,
         additionalInstructions: additionalInstructions.trim() || undefined,
+        promptId: selectedPrompt?.id ?? null,
       };
 
       const generated = await generateContent(params);

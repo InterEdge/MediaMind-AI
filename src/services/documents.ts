@@ -1,4 +1,6 @@
 import { supabase } from "../lib/supabase";
+import { buildWorkspaceStoragePath, requireActiveWorkspaceId, withActiveWorkspace } from "../utils/workspaceOwnership";
+import { invokeAuthenticatedEdgeFunction } from "./edgeFunctions";
 
 const BUCKET = "documents";
 
@@ -16,6 +18,7 @@ export interface DocumentRow {
   extracted_text: string | null;
   keywords: string[];
   ai_status: string | null;
+  workspace_id: string | null;
 }
 
 function formatFileSize(bytes: number): string {
@@ -33,8 +36,7 @@ function inferType(fileName: string): string {
 }
 
 export async function uploadDocument(file: File): Promise<DocumentRow> {
-  const fileExt = file.name.split(".").pop();
-  const storagePath = `${Date.now()}.${fileExt}`;
+  const storagePath = buildWorkspaceStoragePath(file.name);
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
@@ -45,7 +47,7 @@ export async function uploadDocument(file: File): Promise<DocumentRow> {
   const { data, error } = await supabase
     .from("documents")
     .insert([
-      {
+      withActiveWorkspace({
         title: file.name,
         type: inferType(file.name),
         category: "Uncategorized",
@@ -54,7 +56,7 @@ export async function uploadDocument(file: File): Promise<DocumentRow> {
         summary: null,
         tags: [],
         file_path: storagePath,
-      },
+      }),
     ])
     .select()
     .single();
@@ -68,6 +70,7 @@ export async function getDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from("documents")
     .select("*")
+    .eq("workspace_id", requireActiveWorkspaceId())
     .order("uploaded_at", { ascending: false });
 
   if (error) throw error;
@@ -82,7 +85,8 @@ export async function getDocuments(): Promise<DocumentRow[]> {
 export async function getDocumentsLite(): Promise<DocumentRow[]> {
   const { data, error } = await supabase
     .from("documents")
-    .select("id,title,type,category,file_size,status,summary,tags,uploaded_at,file_path,keywords,ai_status")
+    .select("id,title,type,category,file_size,status,summary,tags,uploaded_at,file_path,keywords,ai_status,workspace_id")
+    .eq("workspace_id", requireActiveWorkspaceId())
     .order("uploaded_at", { ascending: false });
 
   if (error) throw error;
@@ -113,23 +117,22 @@ export async function updateDocumentStatus(
 }
 
 export async function processDocument(documentId: string): Promise<void> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-  const response = await fetch(`${supabaseUrl}/functions/v1/process-document`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${anonKey}`,
-      apikey: anonKey,
-    },
-    body: JSON.stringify({ documentId }),
-  });
+  const response = await invokeAuthenticatedEdgeFunction("process-document", { documentId });
 
   if (!response.ok) {
     const errBody = await response.text();
     throw new Error(`Processing failed (${response.status}): ${errBody}`);
   }
+}
+
+export async function createDocumentSignedUrl(document: DocumentRow, expiresIn = 300): Promise<string> {
+  const workspaceId = requireActiveWorkspaceId();
+  if (document.workspace_id !== workspaceId || !document.file_path?.startsWith(`${workspaceId}/`)) {
+    throw new Error("Document belongs to a different workspace.");
+  }
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(document.file_path, expiresIn);
+  if (error) throw error;
+  return data.signedUrl;
 }
 
 export async function markDocumentFailed(id: string): Promise<void> {

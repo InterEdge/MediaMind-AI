@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { User, Bell, Shield, Palette, Globe, Check } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
+import { getDisplayName } from "../utils/auth";
 
 export default function Settings() {
+  const { user, profile, workspace, membership } = useAuth();
+  const displayName = getDisplayName(profile?.display_name, user?.email);
   const [notifEmail, setNotifEmail] = useState(true);
   const [notifPush, setNotifPush] = useState(true);
   const [notifWeekly, setNotifWeekly] = useState(false);
@@ -48,7 +52,8 @@ export default function Settings() {
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Full Name</label>
             <input
               type="text"
-              defaultValue="Alex Morgan"
+              value={displayName}
+              readOnly
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -56,7 +61,8 @@ export default function Settings() {
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Email</label>
             <input
               type="email"
-              defaultValue="alex@mediamind.ai"
+              value={user?.email ?? ""}
+              readOnly
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -64,7 +70,8 @@ export default function Settings() {
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Role</label>
             <input
               type="text"
-              defaultValue="Media Director"
+              value={membership?.role === "owner" ? "Workspace Owner" : "Workspace Member"}
+              readOnly
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -72,7 +79,8 @@ export default function Settings() {
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Company</label>
             <input
               type="text"
-              defaultValue="MediaMind Agency"
+              value={workspace?.name ?? ""}
+              readOnly
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
