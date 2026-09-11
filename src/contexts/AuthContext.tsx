@@ -4,14 +4,16 @@ import { supabase } from "../lib/supabase";
 import {
   loginWithPassword,
   logout,
+  requestPasswordReset,
   resolveAuthWorkspace,
   restoreSession,
   signUpWithPassword,
+  updatePassword,
   type Profile,
   type Workspace,
   type WorkspaceMembership,
 } from "../services/auth";
-import type { AuthCredentials, SignUpCredentials } from "../utils/auth";
+import { isPasswordRecoveryUrl, type AuthCredentials, type SignUpCredentials } from "../utils/auth";
 import { setActiveWorkspaceId } from "../utils/workspaceOwnership";
 
 interface AuthContextValue {
@@ -22,8 +24,12 @@ interface AuthContextValue {
   membership: WorkspaceMembership | null;
   restoring: boolean;
   resolutionError: string | null;
+  passwordRecovery: boolean;
   login: (credentials: AuthCredentials) => Promise<void>;
   signUp: (credentials: SignUpCredentials) => Promise<{ confirmationRequired: boolean }>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  updatePassword: (password: string) => Promise<void>;
+  completePasswordRecovery: () => void;
   signOut: () => Promise<void>;
   retryResolution: () => Promise<void>;
 }
@@ -37,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [membership, setMembership] = useState<WorkspaceMembership | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [resolutionError, setResolutionError] = useState<string | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(() => isPasswordRecoveryUrl(window.location));
   const resolutionSequence = useRef(0);
 
   const applySession = useCallback(async (nextSession: Session | null) => {
@@ -78,7 +85,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRestoring(false);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       if (active) setTimeout(() => { if (active) void applySession(nextSession); }, 0);
     });
     return () => {
@@ -102,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applySession, session]);
 
   const handleSignOut = useCallback(async () => {
+    setPasswordRecovery(false);
     setResolutionError(null);
     try {
       await logout();
@@ -119,8 +128,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       membership,
       restoring,
       resolutionError,
+      passwordRecovery,
       login: loginWithPassword,
       signUp: signUpWithPassword,
+      requestPasswordReset,
+      updatePassword,
+      completePasswordRecovery: () => setPasswordRecovery(false),
       signOut: handleSignOut,
       retryResolution,
     }}>

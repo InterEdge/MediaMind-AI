@@ -5,7 +5,7 @@ import { getAuthShellState } from "../utils/auth";
 import AuthScreen from "./AuthScreen";
 
 export default function AuthGate() {
-  const { session, workspace, restoring, resolutionError, retryResolution, signOut } = useAuth();
+  const { session, workspace, restoring, resolutionError, passwordRecovery, retryResolution, signOut } = useAuth();
   const state = getAuthShellState({
     restoring,
     hasSession: Boolean(session),
@@ -13,6 +13,7 @@ export default function AuthGate() {
     resolutionError,
   });
 
+  if (passwordRecovery) return <AuthScreen />;
   if (state === "restoring" || state === "resolving") {
     return <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-100 text-slate-600"><Loader2 className="h-7 w-7 animate-spin text-blue-600" /><p className="text-sm">Restoring your MediaMind workspace...</p></div>;
   }

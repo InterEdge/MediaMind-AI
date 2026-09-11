@@ -1,6 +1,6 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { requireResolvedWorkspace, validateLoginCredentials, validateSignUpCredentials, type AuthCredentials, type SignUpCredentials } from "../utils/auth";
+import { requireResolvedWorkspace, validateLoginCredentials, validateRecoveryEmail, validateSignUpCredentials, type AuthCredentials, type SignUpCredentials } from "../utils/auth";
 
 export interface Profile {
   id: string;
@@ -56,6 +56,19 @@ export async function signUpWithPassword(credentials: SignUpCredentials): Promis
 
 export async function logout(): Promise<void> {
   const { error } = await supabase.auth.signOut();
+  if (error) throw new Error(error.message);
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  const normalizedEmail = validateRecoveryEmail(email);
+  const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo: `${window.location.origin}`,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function updatePassword(password: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password });
   if (error) throw new Error(error.message);
 }
 
