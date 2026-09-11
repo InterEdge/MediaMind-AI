@@ -7,10 +7,33 @@ export interface SignUpCredentials extends AuthCredentials {
   displayName: string;
 }
 
+export interface NewPasswordCredentials {
+  password: string;
+  confirmation: string;
+}
+
 export type AuthShellState = "restoring" | "unauthenticated" | "resolving" | "authenticated" | "error";
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+export function validateRecoveryEmail(email: string): string {
+  const normalized = normalizeEmail(email);
+  if (!/^\S+@\S+\.\S+$/.test(normalized)) throw new Error("Enter a valid email address.");
+  return normalized;
+}
+
+export function validateNewPassword(credentials: NewPasswordCredentials): string {
+  if (credentials.password.length < 6) throw new Error("Password must be at least 6 characters.");
+  if (credentials.password !== credentials.confirmation) throw new Error("Passwords do not match.");
+  return credentials.password;
+}
+
+export function isPasswordRecoveryUrl(location: Pick<Location, "hash" | "search">): boolean {
+  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const searchParams = new URLSearchParams(location.search);
+  return hashParams.get("type") === "recovery" || searchParams.get("type") === "recovery";
 }
 
 export function validateLoginCredentials(credentials: AuthCredentials): AuthCredentials {
