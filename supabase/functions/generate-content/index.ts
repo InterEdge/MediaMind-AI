@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
+import { ContentValidationError, validateContentRequest } from "../_shared/contentValidation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -349,9 +350,25 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed." }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json", "Allow": "POST, OPTIONS" },
+    });
+  }
 
   try {
-    const body: GenerateRequest = await req.json();
+    const requestText = await req.text();
+    if (new TextEncoder().encode(requestText).byteLength > 64000) {
+      throw new ContentValidationError("Content request is too large.", 413);
+    }
+    let body: GenerateRequest;
+    try {
+      body = JSON.parse(requestText);
+    } catch {
+      throw new ContentValidationError("A valid JSON request is required.");
+    }
+    validateContentRequest(body);
     const {
       contentType,
       topic,
@@ -590,6 +607,12 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    if (err instanceof ContentValidationError) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: err.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     console.error("Generate content error:", err);
     return new Response(
       JSON.stringify({ error: err.message || "Internal server error" }),
