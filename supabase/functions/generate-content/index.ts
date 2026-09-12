@@ -1,6 +1,6 @@
 import { authenticateEdgeRequest, edgeAuthorizationResponse, requireWorkspaceMembership } from "../_shared/edgeAuth.ts";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
-import { ContentValidationError, requireUsableSources, validateContentRequest } from "../_shared/contentValidation.ts";
+import { ContentValidationError, parseGeneratedContent, requireUsableSources, validateContentRequest } from "../_shared/contentValidation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -550,6 +550,7 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
     // ── Call OpenRouter ─────────────────────────────────────────
     const aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(60000),
       headers: {
         "Authorization": `Bearer ${openrouterApiKey}`,
         "Content-Type": "application/json",
@@ -574,8 +575,11 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
       );
     }
 
-    const aiData = await aiResponse.json();
-    const rawContent: string | null = aiData.choices?.[0]?.message?.content ?? null;
+    const aiData = await aiResponse.json().catch((error) => {
+      if (error instanceof Error && error.name === "TimeoutError") throw error;
+      throw new ContentValidationError("AI returned an invalid response. Please try again.", 502);
+    });
+    const rawContent: unknown = aiData?.choices?.[0]?.message?.content ?? null;
 
     if (!rawContent) {
       return new Response(
@@ -585,24 +589,9 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
     }
 
     // ── Parse structured JSON response ─────────────────────────
-    let parsed: {
-      content: string;
-      headline?: string;
-      cta?: string;
-      hashtags?: string[];
-    };
-
-    try {
-      const cleaned = rawContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      // If AI didn't return valid JSON, use raw content as fallback
-      parsed = { content: rawContent };
-    }
-
-    // Ensure content is a string
-    if (typeof parsed.content !== "string" || !parsed.content.trim()) {
-      parsed = { content: rawContent };
+    const parsed = parseGeneratedContent(rawContent);
+    if (contentType === "X Post" && parsed.content.length > 280) {
+      throw new ContentValidationError("AI returned an X post exceeding 280 characters. Please try again.", 502);
     }
 
     return new Response(
@@ -617,6 +606,12 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      return new Response(JSON.stringify({ error: "AI generation timed out. Please try again." }), {
+        status: 504,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const authorizationResponse = edgeAuthorizationResponse(err, corsHeaders);
     if (authorizationResponse) return authorizationResponse;
     if (err instanceof ContentValidationError) {
