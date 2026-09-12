@@ -1,6 +1,6 @@
 import { authenticateEdgeRequest, edgeAuthorizationResponse, requireWorkspaceMembership } from "../_shared/edgeAuth.ts";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
-import { ContentValidationError, validateContentRequest } from "../_shared/contentValidation.ts";
+import { ContentValidationError, requireUsableSources, validateContentRequest } from "../_shared/contentValidation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -492,6 +492,8 @@ Deno.serve(async (req: Request) => {
         documentContext = DOCUMENT_CONTEXT_PREFIX + built.context;
       }
     }
+
+    requireUsableSources(requestedIds, sourceUsage.usedIds);
 
     // ── Build prompts ──────────────────────────────────────────
     const config = contentTypeConfig[contentType];
