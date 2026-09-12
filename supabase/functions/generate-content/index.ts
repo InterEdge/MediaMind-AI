@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { authenticateEdgeRequest, edgeAuthorizationResponse, requireWorkspaceMembership } from "../_shared/edgeAuth.ts";
 import { getOpenRouterApiKey } from "../_shared/openrouter.ts";
 import { ContentValidationError, validateContentRequest } from "../_shared/contentValidation.ts";
 
@@ -9,6 +9,7 @@ const corsHeaders = {
 };
 
 interface GenerateRequest {
+  workspaceId?: string;
   contentType: string;
   topic?: string;
   tone: string;
@@ -428,12 +429,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const auth = await authenticateEdgeRequest(req);
+    const workspaceId = await requireWorkspaceMembership(auth, body.workspaceId);
+    const supabase = auth.serviceClient;
+
     // ── Environment ────────────────────────────────────────────
     // Load OpenRouter API key with automatic fallback to the backup key.
     // See supabase/functions/_shared/openrouter.ts for details.
     const openrouterApiKey = getOpenRouterApiKey();
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!openrouterApiKey) {
       return new Response(
@@ -441,8 +444,6 @@ Deno.serve(async (req: Request) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     // ── Gather document context ───────────────────────────────
     let documentContext = "";
@@ -460,6 +461,7 @@ Deno.serve(async (req: Request) => {
       const { data: docs, error: docsError } = await supabase
         .from("documents")
         .select("id, title, summary, extracted_text, keywords, category, type")
+        .eq("workspace_id", workspaceId)
         .in("id", requestedIds);
 
       if (docsError) {
@@ -470,6 +472,12 @@ Deno.serve(async (req: Request) => {
       }
 
       const foundById = new Map(((docs ?? []) as SourceDocument[]).map((doc) => [doc.id, doc]));
+      if (requestedIds.some((id) => !foundById.has(id))) {
+        return new Response(
+          JSON.stringify({ error: "One or more selected documents are unavailable in this workspace." }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       const foundDocs = requestedIds.flatMap((id) => foundById.has(id) ? [foundById.get(id)!] : []);
       const usableDocs = foundDocs.filter((doc) => normalizeText(doc.extracted_text).length > 0);
       sourceUsage.foundIds = foundDocs.map((doc) => doc.id);
@@ -607,6 +615,8 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    const authorizationResponse = edgeAuthorizationResponse(err, corsHeaders);
+    if (authorizationResponse) return authorizationResponse;
     if (err instanceof ContentValidationError) {
       return new Response(JSON.stringify({ error: err.message }), {
         status: err.status,
