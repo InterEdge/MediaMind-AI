@@ -10,6 +10,7 @@ const corsHeaders = {
 
 interface GenerateRequest {
   workspaceId?: string;
+  promptId?: string | null;
   contentType: string;
   topic?: string;
   tone: string;
@@ -433,6 +434,23 @@ Deno.serve(async (req: Request) => {
     const workspaceId = await requireWorkspaceMembership(auth, body.workspaceId);
     const supabase = auth.serviceClient;
 
+    let promptTemplate = "";
+    if (body.promptId != null) {
+      const { data: prompt, error: promptError } = await supabase
+        .from("prompts")
+        .select("id, template")
+        .eq("id", body.promptId)
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
+      if (promptError) {
+        throw new ContentValidationError("Selected prompt could not be retrieved. Please try again.", 502);
+      }
+      if (!prompt) {
+        throw new ContentValidationError("Selected prompt is unavailable in this workspace.", 403);
+      }
+      promptTemplate = prompt.template;
+    }
+
     // ── Environment ────────────────────────────────────────────
     // Load OpenRouter API key with automatic fallback to the backup key.
     // See supabase/functions/_shared/openrouter.ts for details.
@@ -461,8 +479,8 @@ Deno.serve(async (req: Request) => {
       const { data: docs, error: docsError } = await supabase
         .from("documents")
         .select("id, title, summary, extracted_text, keywords, category, type")
-        .eq("workspace_id", workspaceId)
-        .in("id", requestedIds);
+        .in("id", requestedIds)
+        .eq("workspace_id", workspaceId);
 
       if (docsError) {
         return new Response(
@@ -472,7 +490,7 @@ Deno.serve(async (req: Request) => {
       }
 
       const foundById = new Map(((docs ?? []) as SourceDocument[]).map((doc) => [doc.id, doc]));
-      if (requestedIds.some((id) => !foundById.has(id))) {
+      if ((docs ?? []).length !== requestedIds.length || requestedIds.some((id) => !foundById.has(id))) {
         return new Response(
           JSON.stringify({ error: "One or more selected documents are unavailable in this workspace." }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -537,6 +555,9 @@ Do not reproduce every fact in the document; prioritize facts explicitly request
     systemPrompt += structuredParts.join("\n");
 
     let userPrompt = "";
+    if (promptTemplate.trim()) {
+      userPrompt += `Prompt template:\n${promptTemplate.trim()}\n\n`;
+    }
     if (topic?.trim()) {
       userPrompt += `Topic: ${topic.trim()}`;
     }
