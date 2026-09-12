@@ -6,7 +6,7 @@ import { validateNewPassword } from "../utils/auth";
 type AuthMode = "login" | "signup" | "forgot-password" | "reset-password";
 
 export default function AuthScreen() {
-  const { passwordRecovery, login, signUp, requestPasswordReset, updatePassword, completePasswordRecovery } = useAuth();
+  const { passwordRecovery, callbackError, clearCallbackError, signInWithGoogle, login, signUp, requestPasswordReset, updatePassword, completePasswordRecovery } = useAuth();
   const [mode, setMode] = useState<AuthMode>(passwordRecovery ? "reset-password" : "login");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -16,12 +16,45 @@ export default function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [resetComplete, setResetComplete] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setGoogleSubmitting(true);
+    setError(null);
+    setMessage(null);
+    clearCallbackError();
+    try {
+      await signInWithGoogle();
+    } catch {
+      setError("Google sign-in could not be started. Please try again or use email and password.");
+      setSubmitting(false);
+      setGoogleSubmitting(false);
+    }
+  };
 
   useEffect(() => {
-    if (passwordRecovery) setMode("reset-password");
-  }, [passwordRecovery]);
+    if (callbackError) setMode("login");
+    else if (passwordRecovery) setMode("reset-password");
+  }, [passwordRecovery, callbackError]);
+
+  useEffect(() => {
+    // Returning from Google with the browser Back button can restore this page
+    // from the back/forward cache, including its disabled redirect button.
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        setSubmitting(false);
+        setGoogleSubmitting(false);
+      }
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
 
   const switchMode = (nextMode: AuthMode) => {
+    if (submitting) return;
+    clearCallbackError();
     setMode(nextMode);
     setError(null);
     setMessage(null);
@@ -32,6 +65,7 @@ export default function AuthScreen() {
   const handleAuthSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (submitting) return;
+    clearCallbackError();
     setSubmitting(true);
     setError(null);
     setMessage(null);
@@ -107,8 +141,18 @@ export default function AuthScreen() {
           </div>
         )}
 
-        {error && <div role="alert" aria-live="assertive" className="mb-4 rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-700">{error}</div>}
+        {(error || callbackError) && <div role="alert" aria-live="assertive" className="mb-4 rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-700">{error || callbackError}</div>}
         {message && <div role="status" aria-live="polite" className="mb-4 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">{message}</div>}
+
+        {(mode === "login" || mode === "signup") && (
+          <div className="mb-4">
+            <button type="button" disabled={submitting} onClick={() => void handleGoogleSignIn()} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
+              {googleSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {googleSubmitting ? "Redirecting to Google..." : "Continue with Google"}
+            </button>
+            <p className="mt-4 text-center text-xs text-slate-500">or continue with email</p>
+          </div>
+        )}
 
         {(mode === "login" || mode === "signup") && (
           <form onSubmit={handleAuthSubmit} className="space-y-4">

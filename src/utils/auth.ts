@@ -14,6 +14,29 @@ export interface NewPasswordCredentials {
 
 export type AuthShellState = "restoring" | "unauthenticated" | "resolving" | "authenticated" | "error";
 
+export const AUTH_CALLBACK_ERROR = "Sign-in could not be completed. Please try again or use email and password.";
+
+export function hasAuthCallbackError(location: Pick<Location, "hash" | "search">): boolean {
+  return [location.search, location.hash].some((part) => {
+    const params = new URLSearchParams(part.replace(/^[?#]/, ""));
+    return ["error", "error_code", "error_description"].some((key) => params.has(key));
+  });
+}
+
+// Only clean failed callbacks, after the SDK has finished reading the URL.
+export function cleanFailedAuthCallbackUrl(href: string, initializationFailed = false): string {
+  const url = new URL(href);
+  if (!initializationFailed && !hasAuthCallbackError(url)) return href;
+  const authKeys = ["error", "error_code", "error_description", "access_token", "refresh_token", "provider_token", "provider_refresh_token", "token_type", "expires_in", "expires_at", "code", "type", "state"];
+  const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+  for (const key of authKeys) {
+    url.searchParams.delete(key);
+    hash.delete(key);
+  }
+  url.hash = hash.toString();
+  return url.toString();
+}
+
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }

@@ -1,6 +1,6 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { requireResolvedWorkspace, validateLoginCredentials, validateRecoveryEmail, validateSignUpCredentials, type AuthCredentials, type SignUpCredentials } from "../utils/auth";
+import { AUTH_CALLBACK_ERROR, cleanFailedAuthCallbackUrl, hasAuthCallbackError, requireResolvedWorkspace, validateLoginCredentials, validateRecoveryEmail, validateSignUpCredentials, type AuthCredentials, type SignUpCredentials } from "../utils/auth";
 
 export interface Profile {
   id: string;
@@ -31,10 +31,31 @@ export interface ResolvedAuthWorkspace {
   membership: WorkspaceMembership;
 }
 
+export class AuthCallbackError extends Error {}
+
 export async function restoreSession(): Promise<Session | null> {
+  const failedCallback = hasAuthCallbackError(window.location);
+  const { error: initializationError } = await supabase.auth.initialize();
+  if (failedCallback || initializationError) {
+    const cleanUrl = cleanFailedAuthCallbackUrl(window.location.href, Boolean(initializationError));
+    if (cleanUrl !== window.location.href) window.history.replaceState(window.history.state, "", cleanUrl);
+    throw new AuthCallbackError(AUTH_CALLBACK_ERROR);
+  }
   const { data, error } = await supabase.auth.getSession();
   if (error) throw new Error(`Failed to restore session: ${error.message}`);
   return data.session;
+}
+
+export async function signInWithGoogle(): Promise<void> {
+  try {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) throw error;
+  } catch {
+    throw new Error("Google sign-in could not be started. Please try again or use email and password.");
+  }
 }
 
 export async function loginWithPassword(credentials: AuthCredentials): Promise<void> {
