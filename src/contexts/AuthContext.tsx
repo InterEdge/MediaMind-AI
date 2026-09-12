@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import {
+  AuthCallbackError,
+  signInWithGoogle,
   loginWithPassword,
   logout,
   requestPasswordReset,
@@ -25,6 +27,9 @@ interface AuthContextValue {
   restoring: boolean;
   resolutionError: string | null;
   passwordRecovery: boolean;
+  callbackError: string | null;
+  clearCallbackError: () => void;
+  signInWithGoogle: () => Promise<void>;
   login: (credentials: AuthCredentials) => Promise<void>;
   signUp: (credentials: SignUpCredentials) => Promise<{ confirmationRequired: boolean }>;
   requestPasswordReset: (email: string) => Promise<void>;
@@ -43,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [membership, setMembership] = useState<WorkspaceMembership | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [resolutionError, setResolutionError] = useState<string | null>(null);
+  const [callbackError, setCallbackError] = useState<string | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(() => isPasswordRecoveryUrl(window.location));
   const resolutionSequence = useRef(0);
 
@@ -81,6 +87,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((initialSession) => { if (active) void applySession(initialSession); })
       .catch((error) => {
         if (!active) return;
+        if (error instanceof AuthCallbackError) {
+          setPasswordRecovery(false);
+          setCallbackError(error.message);
+          setRestoring(false);
+          return;
+        }
         setResolutionError(error instanceof Error ? error.message : "Failed to restore session.");
         setRestoring(false);
       });
@@ -129,6 +141,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       restoring,
       resolutionError,
       passwordRecovery,
+      callbackError,
+      clearCallbackError: () => setCallbackError(null),
+      signInWithGoogle,
       login: loginWithPassword,
       signUp: signUpWithPassword,
       requestPasswordReset,
