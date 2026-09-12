@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { withActiveWorkspace } from "../utils/workspaceOwnership";
 import type { ContentObjective, ContentType } from "../types/content";
 
 export interface GenerationConfig {
@@ -97,10 +98,12 @@ export async function generateContent(params: GenerateContentParams): Promise<Ge
   };
 }
 
-export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id: string }> {
+export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id: string; warning?: string }> {
+  const ownership = withActiveWorkspace({});
   const { data, error } = await supabase
     .from("drafts")
     .insert({
+      ...ownership,
       title: params.title,
       content: params.content,
       platform: params.platform,
@@ -124,8 +127,10 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
 
   if (error) throw new Error(`Failed to save draft: ${error.message}`);
 
-  // Create activity record
-  await supabase.from("activities").insert({
+  // Activity tracking must not turn a completed draft save into a failure.
+  try {
+    const { error: activityError } = await supabase.from("activities").insert({
+    ...ownership,
     type: "draft",
     description: `Saved AI-generated draft: "${params.title}"`,
     metadata: {
@@ -139,7 +144,11 @@ export async function saveGeneratedDraft(params: SaveDraftParams): Promise<{ id:
       objective: params.objective ?? null,
       prompt_id: params.promptId ?? null,
     },
-  });
+    });
+    if (activityError) throw activityError;
+  } catch {
+    return { id: data.id, warning: "Draft saved, but activity tracking could not be recorded." };
+  }
 
   return { id: data.id };
 }
