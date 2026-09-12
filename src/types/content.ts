@@ -85,3 +85,4 @@ export function isContentType(value: string): value is ContentType {
 export function isOutputLength(value: string): value is OutputLength {
   return OUTPUT_LENGTH_OPTIONS.includes(value as OutputLength);
 }
+export const OUTPUT_LENGTHS = OUTPUT_LENGTH_OPTIONS;
