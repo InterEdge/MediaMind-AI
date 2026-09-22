@@ -36,6 +36,7 @@ export type TransformationSessionAction =
   | { type: "transformation_succeeded"; result: GeneratedResult; action: TransformationAction; targetTone?: string }
   | { type: "transformation_failed"; error: string }
   | { type: "content_edited"; content: string }
+  | { type: "fields_edited"; fields: Partial<Pick<GeneratedResult, "headline" | "cta" | "hashtags">> }
   | { type: "revert" }
   | { type: "clear" };
 
@@ -139,6 +140,13 @@ export function transformationSessionReducer(
       return { ...state, status: "idle", activeAction: null, error: action.error };
     case "content_edited":
       return { ...state, editableContent: action.content };
+    case "fields_edited":
+      return state.currentResult
+        ? {
+            ...state,
+            currentResult: cloneGeneratedResult({ ...state.currentResult, ...action.fields }),
+          }
+        : state;
     case "revert":
       return state.originalResult
         ? {
